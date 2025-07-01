@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright 2024 Tomeu Vizoso <tomeu@tomeuvizoso.net> */
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright 2024-2025 Tomeu Vizoso <tomeu@tomeuvizoso.net> */
 
 #include <drm/drm_accel.h>
 #include <drm/drm_drv.h>
@@ -7,9 +7,11 @@
 #include <drm/drm_ioctl.h>
 #include <drm/drm_of.h>
 #include <drm/rocket_accel.h>
+#include <linux/array_size.h>
 #include <linux/clk.h>
 #include <linux/component.h>
 #include <linux/dma-mapping.h>
+#include <linux/iommu.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
@@ -30,6 +32,7 @@ rocket_open(struct drm_device *dev, struct drm_file *file)
 		return -ENOMEM;
 
 	rocket_priv->rdev = rdev;
+	rocket_priv->domain = iommu_paging_domain_alloc(dev->dev);
 	file->driver_priv = rocket_priv;
 
 	ret = rocket_job_open(rocket_priv);
@@ -48,6 +51,7 @@ rocket_postclose(struct drm_device *dev, struct drm_file *file)
 {
 	struct rocket_file_priv *rocket_priv = file->driver_priv;
 
+	iommu_domain_free(rocket_priv->domain);
 	rocket_job_close(rocket_priv);
 	kfree(rocket_priv);
 }
@@ -89,8 +93,8 @@ static int rocket_drm_bind(struct device *dev)
 	int err;
 
 	rdev = devm_drm_dev_alloc(dev, &rocket_drm_driver, struct rocket_device, ddev);
-	if (IS_ERR(ddev))
-		return PTR_ERR(ddev);
+	if (IS_ERR(rdev))
+		return PTR_ERR(rdev);
 
 	ddev = &rdev->ddev;
 	dev_set_drvdata(dev, rdev);
@@ -99,8 +103,7 @@ static int rocket_drm_bind(struct device *dev)
 		if (of_device_is_available(core_node))
 			num_cores++;
 
-	rdev->cores = devm_kmalloc_array(dev, num_cores, sizeof(*rdev->cores),
-					 GFP_KERNEL | __GFP_ZERO);
+	rdev->cores = devm_kcalloc(dev, num_cores, sizeof(*rdev->cores), GFP_KERNEL);
 	if (IS_ERR(rdev->cores))
 		return PTR_ERR(rdev->cores);
 
@@ -231,21 +234,31 @@ static const struct of_device_id dt_match[] = {
 };
 MODULE_DEVICE_TABLE(of, dt_match);
 
-static int rocket_device_runtime_resume(struct device *dev)
+static int find_core_for_dev(struct device *dev)
 {
 	struct rocket_device *rdev = dev_get_drvdata(dev);
 
 	for (unsigned int core = 0; core < rdev->num_cores; core++) {
-		if (dev != rdev->cores[core].dev)
-			continue;
+		if (dev == rdev->cores[core].dev)
+			return core;
+	}
 
-		if (core == 0) {
-			clk_prepare_enable(rdev->clk_npu);
-			clk_prepare_enable(rdev->pclk);
-		}
+	return -1;
+}
 
-		clk_prepare_enable(rdev->cores[core].a_clk);
-		clk_prepare_enable(rdev->cores[core].h_clk);
+static int rocket_device_runtime_resume(struct device *dev)
+{
+	struct rocket_device *rdev = dev_get_drvdata(dev);
+	int core = find_core_for_dev(dev);
+	int err = 0;
+
+	if (core < 0)
+		return -ENODEV;
+
+	err = clk_bulk_prepare_enable(ARRAY_SIZE(rdev->cores[core].clks), rdev->cores[core].clks);
+	if (err) {
+		dev_err(dev, "failed to enable (%d) clocks for core %d\n", err, core);
+		return err;
 	}
 
 	return 0;
@@ -254,22 +267,15 @@ static int rocket_device_runtime_resume(struct device *dev)
 static int rocket_device_runtime_suspend(struct device *dev)
 {
 	struct rocket_device *rdev = dev_get_drvdata(dev);
+	int core = find_core_for_dev(dev);
 
-	for (unsigned int core = 0; core < rdev->num_cores; core++) {
-		if (dev != rdev->cores[core].dev)
-			continue;
+	if (core < 0)
+		return -ENODEV;
 
-		if (!rocket_job_is_idle(&rdev->cores[core]))
-			return -EBUSY;
+	if (!rocket_job_is_idle(&rdev->cores[core]))
+		return -EBUSY;
 
-		clk_disable_unprepare(rdev->cores[core].a_clk);
-		clk_disable_unprepare(rdev->cores[core].h_clk);
-
-		if (core == 0) {
-			clk_disable_unprepare(rdev->pclk);
-			clk_disable_unprepare(rdev->clk_npu);
-		}
-	}
+	clk_bulk_disable_unprepare(ARRAY_SIZE(rdev->cores[core].clks), rdev->cores[core].clks);
 
 	return 0;
 }

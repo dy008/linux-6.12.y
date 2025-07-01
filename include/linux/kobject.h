@@ -40,7 +40,7 @@ extern char uevent_helper[];
 #endif
 
 /* counter to tag the uevent, read only except for the kobject core */
-extern u64 uevent_seqnum;
+extern atomic64_t uevent_seqnum;
 
 /*
  * The actions here must match the index to the string array
@@ -220,6 +220,8 @@ int kobject_synth_uevent(struct kobject *kobj, const char *buf, size_t count);
 
 __printf(2, 3)
 int add_uevent_var(struct kobj_uevent_env *env, const char *format, ...);
+
+u64 uevent_next_seqnum(void);
 
 int broadcast_uevent(struct sk_buff *skb, __u32 pid, __u32 group,
 		     gfp_t allocation);

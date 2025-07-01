@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: GPL-2.0-only
 
 config DRM_ACCEL_ROCKET
        tristate "Rocket (support for Rockchip NPUs)"
@@ -16,8 +16,8 @@ config DRM_ACCEL_ROCKET
 	  networks.
 
 	  The interface exposed to userspace is described in
-	  include/uapi/drm/rocket_accel.h and is used by the userspace driver in
-	  Mesa3D.
+	  include/uapi/drm/rocket_accel.h and is used by the Rocket userspace
+	  driver in Mesa3D.
 
 	  If unsure, say N.
 

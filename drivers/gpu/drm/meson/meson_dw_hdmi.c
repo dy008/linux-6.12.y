@@ -823,9 +823,6 @@ static int __maybe_unused meson_dw_hdmi_pm_suspend(struct device *dev)
 	meson_dw_hdmi->data->top_write(meson_dw_hdmi,
 				       HDMITX_TOP_SW_RESET, 0);
 
-	if (dw_hdmi_is_bridge_on(meson_dw_hdmi->hdmi))
-		dw_hdmi_poweroff(meson_dw_hdmi->hdmi);
-
 	return 0;
 }
 
@@ -837,9 +834,6 @@ static int __maybe_unused meson_dw_hdmi_pm_resume(struct device *dev)
 		return 0;
 
 	meson_dw_hdmi_init(meson_dw_hdmi);
-
-	if (dw_hdmi_is_bridge_on(meson_dw_hdmi->hdmi))
-		dw_hdmi_poweron(meson_dw_hdmi->hdmi);
 
 	dw_hdmi_resume(meson_dw_hdmi->hdmi);
 

@@ -1,5 +1,5 @@
-/* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright 2024 Tomeu Vizoso <tomeu@tomeuvizoso.net> */
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright 2024-2025 Tomeu Vizoso <tomeu@tomeuvizoso.net> */
 
 #ifndef __ROCKET_JOB_H__
 #define __ROCKET_JOB_H__
@@ -35,6 +35,8 @@ struct rocket_job {
 
 	/* Fence to be signaled by IRQ handler when the job is complete. */
 	struct dma_fence *done_fence;
+
+	struct iommu_domain *domain;
 
 	struct kref refcount;
 };

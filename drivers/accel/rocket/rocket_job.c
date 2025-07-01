@@ -1,12 +1,14 @@
-// SPDX-License-Identifier: GPL-2.0
+// SPDX-License-Identifier: GPL-2.0-only
 /* Copyright 2019 Linaro, Ltd, Rob Herring <robh@kernel.org> */
 /* Copyright 2019 Collabora ltd. */
-/* Copyright 2024 Tomeu Vizoso <tomeu@tomeuvizoso.net> */
+/* Copyright 2024-2025 Tomeu Vizoso <tomeu@tomeuvizoso.net> */
 
+#include <drm/drm_print.h>
 #include <drm/drm_file.h>
 #include <drm/drm_gem.h>
 #include <drm/rocket_accel.h>
 #include <linux/interrupt.h>
+#include <linux/iommu.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 
@@ -18,27 +20,10 @@
 
 #define JOB_TIMEOUT_MS 500
 
-#define job_write(dev, reg, data) writel(data, dev->iomem + (reg))
-#define job_read(dev, reg) readl(dev->iomem + (reg))
-
 static struct rocket_job *
 to_rocket_job(struct drm_sched_job *sched_job)
 {
 	return container_of(sched_job, struct rocket_job, base);
-}
-
-struct rocket_fence {
-	struct dma_fence base;
-	struct drm_device *dev;
-	/* rocket seqno for signaled() test */
-	u64 seqno;
-	int queue;
-};
-
-static inline struct rocket_fence *
-to_rocket_fence(struct dma_fence *fence)
-{
-	return (struct rocket_fence *)fence;
 }
 
 static const char *rocket_fence_get_driver_name(struct dma_fence *fence)
@@ -58,19 +43,16 @@ static const struct dma_fence_ops rocket_fence_ops = {
 
 static struct dma_fence *rocket_fence_create(struct rocket_core *core)
 {
-	struct rocket_device *rdev = core->rdev;
-	struct rocket_fence *fence;
+	struct dma_fence *fence;
 
 	fence = kzalloc(sizeof(*fence), GFP_KERNEL);
 	if (!fence)
 		return ERR_PTR(-ENOMEM);
 
-	fence->dev = &rdev->ddev;
-	fence->seqno = ++core->emit_seqno;
-	dma_fence_init(&fence->base, &rocket_fence_ops, &core->job_lock,
-		       core->fence_context, fence->seqno);
+	dma_fence_init(fence, &rocket_fence_ops, &core->job_lock,
+		       core->fence_context, ++core->emit_seqno);
 
-	return &fence->base;
+	return fence;
 }
 
 static int
@@ -91,26 +73,29 @@ rocket_copy_tasks(struct drm_device *dev,
 	tasks = kvmalloc_array(rjob->task_count, sizeof(*tasks), GFP_KERNEL);
 	if (!tasks) {
 		ret = -ENOMEM;
-		DRM_DEBUG("Failed to allocate incoming tasks\n");
+		drm_dbg(dev, "Failed to allocate incoming tasks\n");
 		goto fail;
 	}
 
-	if (copy_from_user(tasks,
-			   (void __user *)(uintptr_t)job->tasks,
-			   rjob->task_count * sizeof(*tasks))) {
+	if (copy_from_user(tasks, u64_to_user_ptr(job->tasks), rjob->task_count * sizeof(*tasks))) {
 		ret = -EFAULT;
-		DRM_DEBUG("Failed to copy incoming tasks\n");
+		drm_dbg(dev, "Failed to copy incoming tasks\n");
 		goto fail;
 	}
 
 	rjob->tasks = kvmalloc_array(job->task_count, sizeof(*rjob->tasks), GFP_KERNEL);
 	if (!rjob->tasks) {
-		DRM_DEBUG("Failed to allocate task array\n");
+		drm_dbg(dev, "Failed to allocate task array\n");
 		ret = -ENOMEM;
 		goto fail;
 	}
 
 	for (i = 0; i < rjob->task_count; i++) {
+		if (tasks[i].reserved != 0) {
+			drm_dbg(dev, "Reserved field in drm_rocket_task struct should be 0.\n");
+			return -EINVAL;
+		}
+
 		if (tasks[i].regcmd_count == 0) {
 			ret = -EINVAL;
 			goto fail;
@@ -133,34 +118,30 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
 	/* GO ! */
 
 	/* Don't queue the job if a reset is in progress */
-	if (!atomic_read(&core->reset.pending)) {
+	if (atomic_read(&core->reset.pending))
+		return;
 
-		task = &job->tasks[job->next_task_idx];
-		job->next_task_idx++;   /* TODO: Do this only after a successful run? */
+	task = &job->tasks[job->next_task_idx];
+	job->next_task_idx++;
 
-		rocket_write(core, REG_PC_BASE_ADDRESS, 0x1);
+	rocket_pc_writel(core, BASE_ADDRESS, 0x1);
 
-		rocket_write(core, REG_CNA_S_POINTER, 0xe + 0x10000000 * core->index);
-		rocket_write(core, REG_CORE_S_POINTER, 0xe + 0x10000000 * core->index);
+	rocket_cna_writel(core, S_POINTER, 0xe + 0x10000000 * core->index);
+	rocket_core_writel(core, S_POINTER, 0xe + 0x10000000 * core->index);
 
-		rocket_write(core, REG_PC_BASE_ADDRESS, task->regcmd);
-		rocket_write(core, REG_PC_REGISTER_AMOUNTS, (task->regcmd_count + 1) / 2 - 1);
+	rocket_pc_writel(core, BASE_ADDRESS, task->regcmd);
+	rocket_pc_writel(core, REGISTER_AMOUNTS, (task->regcmd_count + 1) / 2 - 1);
 
-		rocket_write(core, REG_PC_INTERRUPT_MASK,
-			     PC_INTERRUPT_MASK_DPU_0 | PC_INTERRUPT_MASK_DPU_1);
-		rocket_write(core, REG_PC_INTERRUPT_CLEAR,
-			     PC_INTERRUPT_CLEAR_DPU_0 | PC_INTERRUPT_CLEAR_DPU_1);
+	rocket_pc_writel(core, INTERRUPT_MASK, PC_INTERRUPT_MASK_DPU_0 | PC_INTERRUPT_MASK_DPU_1);
+	rocket_pc_writel(core, INTERRUPT_CLEAR, PC_INTERRUPT_CLEAR_DPU_0 | PC_INTERRUPT_CLEAR_DPU_1);
 
-		rocket_write(core, REG_PC_TASK_CON, ((0x6 | task_pp_en) << 12) | task_count);
+	rocket_pc_writel(core, TASK_CON, ((0x6 | task_pp_en) << 12) | task_count);
 
-		rocket_write(core, REG_PC_TASK_DMA_BASE_ADDR, 0x0);
+	rocket_pc_writel(core, TASK_DMA_BASE_ADDR, 0x0);
 
-		rocket_write(core, REG_PC_OPERATION_ENABLE, 0x1);
+	rocket_pc_writel(core, OPERATION_ENABLE, 0x1);
 
-		dev_dbg(core->dev,
-			"Submitted regcmd at 0x%llx to core %d",
-			task->regcmd, core->index);
-	}
+	dev_dbg(core->dev, "Submitted regcmd at 0x%llx to core %d", task->regcmd, core->index);
 }
 
 static int rocket_acquire_object_fences(struct drm_gem_object **bos,
@@ -185,8 +166,8 @@ static int rocket_acquire_object_fences(struct drm_gem_object **bos,
 }
 
 static void rocket_attach_object_fences(struct drm_gem_object **bos,
-					  int bo_count,
-					  struct dma_fence *fence)
+					int bo_count,
+					struct dma_fence *fence)
 {
 	int i;
 
@@ -210,28 +191,23 @@ static int rocket_job_push(struct rocket_job *job)
 	if (ret)
 		goto err;
 
-	mutex_lock(&rdev->sched_lock);
-	drm_sched_job_arm(&job->base);
+	scoped_guard(mutex, &rdev->sched_lock) {
+		drm_sched_job_arm(&job->base);
 
-	job->inference_done_fence = dma_fence_get(&job->base.s_fence->finished);
+		job->inference_done_fence = dma_fence_get(&job->base.s_fence->finished);
 
-	ret = rocket_acquire_object_fences(job->in_bos, job->in_bo_count, &job->base, false);
-	if (ret) {
-		mutex_unlock(&rdev->sched_lock);
-		goto err_unlock;
+		ret = rocket_acquire_object_fences(job->in_bos, job->in_bo_count, &job->base, false);
+		if (ret)
+			goto err_unlock;
+
+		ret = rocket_acquire_object_fences(job->out_bos, job->out_bo_count, &job->base, true);
+		if (ret)
+			goto err_unlock;
+
+		kref_get(&job->refcount); /* put by scheduler job completion */
+
+		drm_sched_entity_push_job(&job->base);
 	}
-
-	ret = rocket_acquire_object_fences(job->out_bos, job->out_bo_count, &job->base, true);
-	if (ret) {
-		mutex_unlock(&rdev->sched_lock);
-		goto err_unlock;
-	}
-
-	kref_get(&job->refcount); /* put by scheduler job completion */
-
-	drm_sched_entity_push_job(&job->base);
-
-	mutex_unlock(&rdev->sched_lock);
 
 	rocket_attach_object_fences(job->out_bos, job->out_bo_count, job->inference_done_fence);
 
@@ -328,12 +304,14 @@ static struct dma_fence *rocket_job_run(struct drm_sched_job *sched_job)
 	if (ret < 0)
 		return fence;
 
-	spin_lock(&core->job_lock);
+	ret = iommu_attach_group(job->domain, iommu_group_get(core->dev));
+	if (ret < 0)
+		return fence;
 
-	core->in_flight_job = job;
-	rocket_job_hw_submit(core, job);
-
-	spin_unlock(&core->job_lock);
+	scoped_guard(spinlock, &core->job_lock) {
+		core->in_flight_job = job;
+		rocket_job_hw_submit(core, job);
+	}
 
 	return fence;
 }
@@ -347,28 +325,26 @@ static void rocket_job_handle_done(struct rocket_core *core,
 	}
 
 	core->in_flight_job = NULL;
+	iommu_detach_group(NULL, iommu_group_get(core->dev));
 	dma_fence_signal_locked(job->done_fence);
 	pm_runtime_put_autosuspend(core->dev);
 }
 
 static void rocket_job_handle_irq(struct rocket_core *core)
 {
-	uint32_t status, raw_status;
+	u32 status, raw_status;
 
 	pm_runtime_mark_last_busy(core->dev);
 
-	status = rocket_read(core, REG_PC_INTERRUPT_STATUS);
-	raw_status = rocket_read(core, REG_PC_INTERRUPT_RAW_STATUS);
+	status = rocket_pc_readl(core, INTERRUPT_STATUS);
+	raw_status = rocket_pc_readl(core, INTERRUPT_RAW_STATUS);
 
-	rocket_write(core, REG_PC_OPERATION_ENABLE, 0x0);
-	rocket_write(core, REG_PC_INTERRUPT_CLEAR, 0x1ffff);
+	rocket_pc_writel(core, OPERATION_ENABLE, 0x0);
+	rocket_pc_writel(core, INTERRUPT_CLEAR, 0x1ffff);
 
-	spin_lock(&core->job_lock);
-
-	if (core->in_flight_job)
-		rocket_job_handle_done(core, core->in_flight_job);
-
-	spin_unlock(&core->job_lock);
+	scoped_guard(spinlock, &core->job_lock)
+		if (core->in_flight_job)
+			rocket_job_handle_done(core, core->in_flight_job);
 }
 
 static void
@@ -404,7 +380,7 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
 	 * Mask job interrupts and synchronize to make sure we won't be
 	 * interrupted during our reset.
 	 */
-	rocket_write(core, REG_PC_INTERRUPT_MASK, 0x0);
+	rocket_pc_writel(core, INTERRUPT_MASK, 0x0);
 	synchronize_irq(core->irq);
 
 	/* Handle the remaining interrupts before we reset. */
@@ -418,12 +394,12 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
 	 * Let's also make sure the cycle counting register's refcnt is
 	 * kept balanced to prevent it from running forever
 	 */
-	spin_lock(&core->job_lock);
-	if (core->in_flight_job)
-		pm_runtime_put_noidle(core->dev);
+	scoped_guard(spinlock, &core->job_lock) {
+		if (core->in_flight_job)
+			pm_runtime_put_noidle(core->dev);
 
-	core->in_flight_job = NULL;
-	spin_unlock(&core->job_lock);
+		core->in_flight_job = NULL;
+	}
 
 	/* Proceed with reset now. */
 	pm_runtime_force_suspend(core->dev);
@@ -445,7 +421,7 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
 	cookie = dma_fence_begin_signalling();
 
 	/* Restart the scheduler */
-	drm_sched_start(&core->sched);
+	drm_sched_start(&core->sched, 0);
 
 	dma_fence_end_signalling(cookie);
 }
@@ -483,6 +459,7 @@ static enum drm_gpu_sched_stat rocket_job_timedout(struct drm_sched_job *sched_j
 
 	atomic_set(&core->reset.pending, 1);
 	rocket_reset(core, sched_job);
+	iommu_detach_group(NULL, iommu_group_get(core->dev));
 
 	return DRM_GPU_SCHED_STAT_NOMINAL;
 }
@@ -513,7 +490,7 @@ static irqreturn_t rocket_job_irq_handler_thread(int irq, void *data)
 static irqreturn_t rocket_job_irq_handler(int irq, void *data)
 {
 	struct rocket_core *core = data;
-	uint32_t raw_status = rocket_read(core, REG_PC_INTERRUPT_RAW_STATUS);
+	u32 raw_status = rocket_pc_readl(core, INTERRUPT_RAW_STATUS);
 
 	WARN_ON(raw_status & PC_INTERRUPT_RAW_STATUS_DMA_READ_ERROR);
 	WARN_ON(raw_status & PC_INTERRUPT_RAW_STATUS_DMA_READ_ERROR);
@@ -522,13 +499,21 @@ static irqreturn_t rocket_job_irq_handler(int irq, void *data)
 	      raw_status & PC_INTERRUPT_RAW_STATUS_DPU_1))
 		return IRQ_NONE;
 
-	rocket_write(core, REG_PC_INTERRUPT_MASK, 0x0);
+	rocket_pc_writel(core, INTERRUPT_MASK, 0x0);
 
 	return IRQ_WAKE_THREAD;
 }
 
 int rocket_job_init(struct rocket_core *core)
 {
+	struct drm_sched_init_args args = {
+		.ops = &rocket_sched_ops,
+		.num_rqs = DRM_SCHED_PRIORITY_COUNT,
+		.credit_limit = 1,
+		.timeout = msecs_to_jiffies(JOB_TIMEOUT_MS),
+		.name = dev_name(core->dev),
+		.dev = core->dev,
+	};
 	int ret;
 
 	INIT_WORK(&core->reset.work, rocket_reset_work);
@@ -554,13 +539,8 @@ int rocket_job_init(struct rocket_core *core)
 
 	core->fence_context = dma_fence_context_alloc(1);
 
-	ret = drm_sched_init(&core->sched,
-				&rocket_sched_ops, NULL,
-				DRM_SCHED_PRIORITY_COUNT,
-				1, 0,
-				msecs_to_jiffies(JOB_TIMEOUT_MS),
-				core->reset.wq,
-				NULL, "rocket", core->dev);
+	args.timeout_wq = core->reset.wq;
+	ret = drm_sched_init(&core->sched, &args);
 	if (ret) {
 		dev_err(core->dev, "Failed to create scheduler: %d.", ret);
 		goto err_sched;
@@ -650,21 +630,21 @@ static int rocket_ioctl_submit_job(struct drm_device *dev, struct drm_file *file
 	if (ret)
 		goto out_cleanup_job;
 
-	ret = drm_gem_objects_lookup(file,
-				     (void __user *)(uintptr_t)job->in_bo_handles,
+	ret = drm_gem_objects_lookup(file, u64_to_user_ptr(job->in_bo_handles),
 				     job->in_bo_handle_count, &rjob->in_bos);
 	if (ret)
 		goto out_cleanup_job;
 
 	rjob->in_bo_count = job->in_bo_handle_count;
 
-	ret = drm_gem_objects_lookup(file,
-				     (void __user *)(uintptr_t)job->out_bo_handles,
+	ret = drm_gem_objects_lookup(file, u64_to_user_ptr(job->out_bo_handles),
 				     job->out_bo_handle_count, &rjob->out_bos);
 	if (ret)
 		goto out_cleanup_job;
 
 	rjob->out_bo_count = job->out_bo_handle_count;
+
+	rjob->domain = file_priv->domain;
 
 	ret = rocket_job_push(rjob);
 	if (ret)
@@ -686,22 +666,32 @@ int rocket_ioctl_submit(struct drm_device *dev, void *data, struct drm_file *fil
 	int ret = 0;
 	unsigned int i = 0;
 
+	if (args->reserved != 0) {
+		drm_dbg(dev, "Reserved field in drm_rocket_submit struct should be 0.\n");
+		return -EINVAL;
+	}
+
 	jobs = kvmalloc_array(args->job_count, sizeof(*jobs), GFP_KERNEL);
 	if (!jobs) {
-		DRM_DEBUG("Failed to allocate incoming job array\n");
+		drm_dbg(dev, "Failed to allocate incoming job array\n");
 		return -ENOMEM;
 	}
 
-	if (copy_from_user(jobs,
-			   (void __user *)(uintptr_t)args->jobs,
+	if (copy_from_user(jobs, u64_to_user_ptr(args->jobs),
 			   args->job_count * sizeof(*jobs))) {
 		ret = -EFAULT;
-		DRM_DEBUG("Failed to copy incoming job array\n");
+		drm_dbg(dev, "Failed to copy incoming job array\n");
 		goto exit;
 	}
 
-	for (i = 0; i < args->job_count; i++)
+	for (i = 0; i < args->job_count; i++) {
+		if (jobs[i].reserved != 0) {
+			drm_dbg(dev, "Reserved field in drm_rocket_job struct should be 0.\n");
+			return -EINVAL;
+		}
+
 		rocket_ioctl_submit_job(dev, file, &jobs[i]);
+	}
 
 exit:
 	kfree(jobs);

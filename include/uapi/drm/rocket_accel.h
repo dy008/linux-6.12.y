@@ -2,8 +2,8 @@
 /*
  * Copyright © 2024 Tomeu Vizoso
  */
-#ifndef _ROCKET_DRM_H_
-#define _ROCKET_DRM_H_
+#ifndef __DRM_UAPI_ROCKET_ACCEL_H__
+#define __DRM_UAPI_ROCKET_ACCEL_H__
 
 #include "drm.h"
 
@@ -26,34 +26,54 @@ extern "C" {
  *
  */
 struct drm_rocket_create_bo {
+	/** Input: Size of the requested BO. */
 	__u32 size;
 
-	/** Returned GEM handle for the BO. */
+	/** Output: GEM handle for the BO. */
 	__u32 handle;
 
 	/**
-	 * Returned DMA address for the BO in the NPU address space.  This address
+	 * Output: DMA address for the BO in the NPU address space.  This address
 	 * is private to the DRM fd and is valid for the lifetime of the GEM
 	 * handle.
 	 */
 	__u64 dma_address;
 
-	/** Offset into the drm node to use for subsequent mmap call. */
+	/** Output: Offset into the drm node to use for subsequent mmap call. */
 	__u64 offset;
 };
 
 #define ROCKET_PREP_READ        0x01
 #define ROCKET_PREP_WRITE       0x02
 
+/**
+ * struct drm_rocket_prep_bo - ioctl argument for starting CPU ownership of the BO.
+ *
+ * Takes care of waiting for any NPU jobs that might still use the NPU and performs cache
+ * synchronization.
+ */
 struct drm_rocket_prep_bo {
-	__u32 handle;		/* in */
-	__u32 op;		/* in, mask of ROCKET_PREP_x */
-	__s64 timeout_ns;	/* in */
+	/** Input: GEM handle of the buffer object. */
+	__u32 handle;
+
+	/** Input: mask of ROCKET_PREP_x, direction of the access. */
+	__u32 op;
+
+	/** Input: Amount of time to wait for NPU jobs. */
+	__s64 timeout_ns;
 };
 
+/**
+ * struct drm_rocket_fini_bo - ioctl argument for finishing CPU ownership of the BO.
+ *
+ * Synchronize caches for NPU access.
+ */
 struct drm_rocket_fini_bo {
-	__u32 handle;		/* in */
-	__u32 flags;		/* in, placeholder for now, no defined values */
+	/** Input: GEM handle of the buffer object. */
+	__u32 handle;
+
+	/** Reserved, must be zero. */
+	__u32 reserved;
 };
 
 /**
@@ -62,11 +82,14 @@ struct drm_rocket_fini_bo {
  * A task is the smallest unit of work that can be run on the NPU.
  */
 struct drm_rocket_task {
-	/** DMA address to NPU mapping of register command buffer */
+	/** Input: DMA address to NPU mapping of register command buffer */
 	__u64 regcmd;
 
-	/** Number of commands in the register command buffer */
+	/** Input: Number of commands in the register command buffer */
 	__u32 regcmd_count;
+
+	/** Reserved, must be zero. */
+	__u32 reserved;
 };
 
 /**
@@ -77,23 +100,26 @@ struct drm_rocket_task {
  * sequentially on the same core, to benefit from memory residency in SRAM.
  */
 struct drm_rocket_job {
-	/** Pointer to an array of struct drm_rocket_task. */
+	/** Input: Pointer to an array of struct drm_rocket_task. */
 	__u64 tasks;
 
-	/** Pointer to a u32 array of the BOs that are read by the job. */
+	/** Input: Pointer to a u32 array of the BOs that are read by the job. */
 	__u64 in_bo_handles;
 
-	/** Pointer to a u32 array of the BOs that are written to by the job. */
+	/** Input: Pointer to a u32 array of the BOs that are written to by the job. */
 	__u64 out_bo_handles;
 
-	/** Number of tasks passed in. */
+	/** Input: Number of tasks passed in. */
 	__u32 task_count;
 
-	/** Number of input BO handles passed in (size is that times 4). */
+	/** Input: Number of input BO handles passed in (size is that times 4). */
 	__u32 in_bo_handle_count;
 
-	/** Number of output BO handles passed in (size is that times 4). */
+	/** Input: Number of output BO handles passed in (size is that times 4). */
 	__u32 out_bo_handle_count;
+
+	/** Reserved, must be zero. */
+	__u32 reserved;
 };
 
 /**
@@ -102,15 +128,18 @@ struct drm_rocket_job {
  * The kernel will schedule the execution of these jobs in dependency order.
  */
 struct drm_rocket_submit {
-	/** Pointer to an array of struct drm_rocket_job. */
+	/** Input: Pointer to an array of struct drm_rocket_job. */
 	__u64 jobs;
 
-	/** Number of jobs passed in. */
+	/** Input: Number of jobs passed in. */
 	__u32 job_count;
+
+	/** Reserved, must be zero. */
+	__u32 reserved;
 };
 
 #if defined(__cplusplus)
 }
 #endif
 
-#endif /* _ROCKET_DRM_H_ */
+#endif /* __DRM_UAPI_ROCKET_ACCEL_H__ */

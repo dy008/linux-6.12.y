@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 OR MIT */
+/* SPDX-License-Identifier: GPL-2.0-only OR MIT */
 
 #ifndef __ROCKET_REGISTERS_XML__
 #define __ROCKET_REGISTERS_XML__

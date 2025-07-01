@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
 %YAML 1.2
 ---
-$id: http://devicetree.org/schemas/npu/rockchip,rknn-core.yaml#
+$id: http://devicetree.org/schemas/npu/rockchip,rk3588-rknn-core.yaml#
 $schema: http://devicetree.org/meta-schemas/core.yaml#
 
 title: Neural Processing Unit IP from Rockchip
@@ -10,29 +10,33 @@ maintainers:
   - Tomeu Vizoso <tomeu@tomeuvizoso.net>
 
 description:
-  Rockchip IP for accelerating inference of neural networks, based on NVIDIA's
-  open source NVDLA IP.
+  Rockchip IP for accelerating inference of neural networks.
+
+  There is to be a node per each core in the NPU. In Rockchip's design there
+  will be one core that is special because it is able to redistribute work to
+  the other cores by forwarding register writes and sharing data. This special
+  core is called the top core and should have the compatible string that
+  corresponds to top cores.
 
 properties:
   $nodename:
-    pattern: '^npu-core@[a-f0-9]+$'
+    pattern: '^npu@[a-f0-9]+$'
 
   compatible:
-    oneOf:
-      - items:
-          - enum:
-              - rockchip,rk3588-rknn-core-top
-          - const: rockchip,rknn-core-top
-      - items:
-          - enum:
-              - rockchip,rk3588-rknn-core
-          - const: rockchip,rknn-core
+    enum:
+      - rockchip,rk3588-rknn-core-top
+      - rockchip,rk3588-rknn-core
 
   reg:
-    maxItems: 1
+    maxItems: 3
+
+  reg-names:
+    items:
+      - const: pc
+      - const: cna
+      - const: core
 
   clocks:
-    minItems: 2
     maxItems: 4
 
   clock-names:
@@ -41,7 +45,6 @@ properties:
       - const: hclk
       - const: npu
       - const: pclk
-    minItems: 2
 
   interrupts:
     maxItems: 1
@@ -67,42 +70,16 @@ properties:
 required:
   - compatible
   - reg
+  - reg-names
   - clocks
   - clock-names
   - interrupts
   - iommus
-  - npu-supply
   - power-domains
   - resets
   - reset-names
+  - npu-supply
   - sram-supply
-
-allOf:
-  - if:
-      properties:
-        compatible:
-          contains:
-            enum:
-              - rockchip,rknn-core-top
-    then:
-      properties:
-        clocks:
-          minItems: 4
-
-        clock-names:
-          minItems: 4
-  - if:
-      properties:
-        compatible:
-          contains:
-            enum:
-              - rockchip,rknn-core
-    then:
-      properties:
-        clocks:
-          maxItems: 2
-        clock-names:
-          maxItems: 2
 
 additionalProperties: false
 
@@ -118,9 +95,12 @@ examples:
       #address-cells = <2>;
       #size-cells = <2>;
 
-      rknn_core_top: npu-core@fdab0000 {
-        compatible = "rockchip,rk3588-rknn-core-top", "rockchip,rknn-core-top";
-        reg = <0x0 0xfdab0000 0x0 0x9000>;
+      npu@fdab0000 {
+        compatible = "rockchip,rk3588-rknn-core-top";
+        reg = <0x0 0xfdab0000 0x0 0x1000>,
+              <0x0 0xfdab1000 0x0 0x1000>,
+              <0x0 0xfdab3000 0x0 0x1000>;
+        reg-names = "pc", "cna", "core";
         assigned-clocks = <&scmi_clk SCMI_CLK_NPU>;
         assigned-clock-rates = <200000000>;
         clocks = <&cru ACLK_NPU0>, <&cru HCLK_NPU0>,
@@ -131,20 +111,6 @@ examples:
         npu-supply = <&vdd_npu_s0>;
         power-domains = <&power RK3588_PD_NPUTOP>;
         resets = <&cru SRST_A_RKNN0>, <&cru SRST_H_RKNN0>;
-        reset-names = "srst_a", "srst_h";
-        sram-supply = <&vdd_npu_mem_s0>;
-      };
-
-      rknn_core_1: npu-core@fdac0000 {
-        compatible = "rockchip,rk3588-rknn-core", "rockchip,rknn-core";
-        reg = <0x0 0xfdac0000 0x0 0x9000>;
-        clocks = <&cru ACLK_NPU1>, <&cru HCLK_NPU1>;
-        clock-names = "aclk", "hclk";
-        interrupts = <GIC_SPI 111 IRQ_TYPE_LEVEL_HIGH 0>;
-        iommus = <&rknn_mmu_1>;
-        npu-supply = <&vdd_npu_s0>;
-        power-domains = <&power RK3588_PD_NPU1>;
-        resets = <&cru SRST_A_RKNN1>, <&cru SRST_H_RKNN1>;
         reset-names = "srst_a", "srst_h";
         sram-supply = <&vdd_npu_mem_s0>;
       };

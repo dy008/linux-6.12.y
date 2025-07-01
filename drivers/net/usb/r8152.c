@@ -7058,7 +7058,7 @@ static int r8152_led_configuration(struct r8152 *tp)
 
 	if (ret)
 		return ret;
-	
+
 	ocp_write_word(tp, MCU_TYPE_PLA, PLA_LEDSEL, led_data);
 
 	return 0;
@@ -10108,6 +10108,7 @@ static const struct usb_device_id rtl8152_table[] = {
 	{ USB_DEVICE(VENDOR_ID_NVIDIA,  0x09ff) },
 	{ USB_DEVICE(VENDOR_ID_TPLINK,  0x0601) },
 	{ USB_DEVICE(VENDOR_ID_DLINK,   0xb301) },
+	{ USB_DEVICE(VENDOR_ID_DELL,    0xb097) },
 	{ USB_DEVICE(VENDOR_ID_ASUS,    0x1976) },
 	{}
 };

@@ -1,66 +1,68 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright 2024 Tomeu Vizoso <tomeu@tomeuvizoso.net> */
+// SPDX-License-Identifier: GPL-2.0-only
+/* Copyright 2024-2025 Tomeu Vizoso <tomeu@tomeuvizoso.net> */
 
 #include <linux/clk.h>
+#include <linux/dev_printk.h>
+#include <linux/err.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 
 #include "rocket_core.h"
 #include "rocket_job.h"
-#include "rocket_registers.h"
-
-static int rocket_clk_init(struct rocket_core *core)
-{
-	struct device *dev = core->dev;
-	int err;
-
-	core->a_clk = devm_clk_get(dev, "aclk");
-	if (IS_ERR(core->a_clk)) {
-		err = PTR_ERR(core->a_clk);
-		dev_err(dev, "devm_clk_get_enabled failed %d for core %d\n", err, core->index);
-		return err;
-	}
-
-	core->h_clk = devm_clk_get(dev, "hclk");
-	if (IS_ERR(core->h_clk)) {
-		err = PTR_ERR(core->h_clk);
-		dev_err(dev, "devm_clk_get_enabled failed %d for core %d\n", err, core->index);
-		clk_disable_unprepare(core->a_clk);
-		return err;
-	}
-
-	return 0;
-}
 
 int rocket_core_init(struct rocket_core *core)
 {
 	struct device *dev = core->dev;
 	struct platform_device *pdev = to_platform_device(dev);
-	uint32_t version;
+	u32 version;
 	int err = 0;
 
-	err = rocket_clk_init(core);
-	if (err) {
-		dev_err(dev, "clk init failed %d\n", err);
-		return err;
+	err = devm_clk_bulk_get(dev, ARRAY_SIZE(core->clks), core->clks);
+	if (err)
+		return dev_err_probe(dev, err, "failed to get clocks for core %d\n", core->index);
+
+	core->pc_iomem = devm_platform_ioremap_resource_byname(pdev, "pc");
+	if (IS_ERR(core->pc_iomem)) {
+		dev_err(dev, "couldn't find PC registers %ld\n", PTR_ERR(core->pc_iomem));
+		return PTR_ERR(core->pc_iomem);
 	}
 
-	core->iomem = devm_platform_ioremap_resource(pdev, 0);
-	if (IS_ERR(core->iomem))
-		return PTR_ERR(core->iomem);
+	core->cna_iomem = devm_platform_ioremap_resource_byname(pdev, "cna");
+	if (IS_ERR(core->cna_iomem)) {
+		dev_err(dev, "couldn't find CNA registers %ld\n", PTR_ERR(core->cna_iomem));
+		return PTR_ERR(core->cna_iomem);
+	}
+
+	core->core_iomem = devm_platform_ioremap_resource_byname(pdev, "core");
+	if (IS_ERR(core->core_iomem)) {
+		dev_err(dev, "couldn't find CORE registers %ld\n", PTR_ERR(core->core_iomem));
+		return PTR_ERR(core->core_iomem);
+	}
 
 	err = rocket_job_init(core);
 	if (err)
 		return err;
 
 	pm_runtime_use_autosuspend(dev);
-	pm_runtime_set_autosuspend_delay(dev, 50); /* ~3 frames */
+
+	/*
+	 * As this NPU will be most often used as part of a media pipeline that
+	 * ends presenting in a display, choose 50 ms (~3 frames at 60Hz) as an
+	 * autosuspend delay as that will keep the device powered up while the
+	 * pipeline is running.
+	 */
+	pm_runtime_set_autosuspend_delay(dev, 50);
+
 	pm_runtime_enable(dev);
 
 	err = pm_runtime_get_sync(dev);
+	if (err) {
+		rocket_job_fini(core);
+		return err;
+	}
 
-	version = rocket_read(core, REG_PC_VERSION);
-	version += rocket_read(core, REG_PC_VERSION_NUM) & 0xffff;
+	version = rocket_pc_readl(core, VERSION);
+	version += rocket_pc_readl(core, VERSION_NUM) & 0xffff;
 
 	pm_runtime_mark_last_busy(dev);
 	pm_runtime_put_autosuspend(dev);
@@ -72,6 +74,7 @@ int rocket_core_init(struct rocket_core *core)
 
 void rocket_core_fini(struct rocket_core *core)
 {
+	pm_runtime_dont_use_autosuspend(core->dev);
 	pm_runtime_disable(core->dev);
 	rocket_job_fini(core);
 }

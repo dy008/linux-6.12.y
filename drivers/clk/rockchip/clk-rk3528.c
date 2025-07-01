@@ -12,6 +12,7 @@
 #include <linux/platform_device.h>
 #include <linux/mfd/syscon.h>
 #include <linux/minmax.h>
+#include <linux/slab.h>
 
 #include <dt-bindings/clock/rockchip,rk3528-cru.h>
 
@@ -1065,20 +1066,20 @@ static struct rockchip_clk_branch rk3528_clk_branches[] __initdata = {
 
 static struct rockchip_clk_branch rk3528_vo_clk_branches[] __initdata = {
 	MMC_GRF(SCLK_SDMMC_DRV, "sdmmc_drv", "cclk_src_sdmmc0",
-			RK3528_SDMMC_CON(0), 1),
+			RK3528_SDMMC_CON(0), 1, grf_type_vo),
 	MMC_GRF(SCLK_SDMMC_SAMPLE, "sdmmc_sample", "cclk_src_sdmmc0",
-			RK3528_SDMMC_CON(1), 1),
+			RK3528_SDMMC_CON(1), 1, grf_type_vo),
 };
 
 static struct rockchip_clk_branch rk3528_vpu_clk_branches[] __initdata = {
 	MMC_GRF(SCLK_SDIO0_DRV, "sdio0_drv", "cclk_src_sdio0",
-			RK3528_SDIO0_CON(0), 1),
+			RK3528_SDIO0_CON(0), 1, grf_type_vpu),
 	MMC_GRF(SCLK_SDIO0_SAMPLE, "sdio0_sample", "cclk_src_sdio0",
-			RK3528_SDIO0_CON(1), 1),
+			RK3528_SDIO0_CON(1), 1, grf_type_vpu),
 	MMC_GRF(SCLK_SDIO1_DRV, "sdio1_drv", "cclk_src_sdio1",
-			RK3528_SDIO1_CON(0), 1),
+			RK3528_SDIO1_CON(0), 1, grf_type_vpu),
 	MMC_GRF(SCLK_SDIO1_SAMPLE, "sdio1_sample", "cclk_src_sdio1",
-			RK3528_SDIO1_CON(1), 1),
+			RK3528_SDIO1_CON(1), 1, grf_type_vpu),
 };
 
 static int __init clk_rk3528_probe(struct platform_device *pdev)
@@ -1087,10 +1088,11 @@ static int __init clk_rk3528_probe(struct platform_device *pdev)
 	unsigned long nr_vo_branches = ARRAY_SIZE(rk3528_vo_clk_branches);
 	unsigned long nr_branches = ARRAY_SIZE(rk3528_clk_branches);
 	unsigned long nr_clks, nr_vo_clks, nr_vpu_clks;
+	struct rockchip_aux_grf *vo_grf_e, *vpu_grf_e;
+	struct regmap *vo_grf, *vpu_grf;
 	struct device *dev = &pdev->dev;
 	struct device_node *np = dev->of_node;
 	struct rockchip_clk_provider *ctx;
-	struct regmap *vo_grf, *vpu_grf;
 	void __iomem *reg_base;
 
 	reg_base = devm_platform_ioremap_resource(pdev, 0);
@@ -1134,12 +1136,32 @@ static int __init clk_rk3528_probe(struct platform_device *pdev)
 				     &rk3528_cpuclk_data, rk3528_cpuclk_rates,
 				     ARRAY_SIZE(rk3528_cpuclk_rates));
 	rockchip_clk_register_branches(ctx, rk3528_clk_branches, nr_branches);
-	if (!IS_ERR(vo_grf))
-		rockchip_clk_register_grf_branches(ctx, rk3528_vo_clk_branches,
-						   vo_grf, nr_vo_branches);
-	if (!IS_ERR(vpu_grf))
-		rockchip_clk_register_grf_branches(ctx, rk3528_vpu_clk_branches,
-						   vpu_grf, nr_vpu_branches);
+
+	if (!IS_ERR(vo_grf)) {
+		vo_grf_e = devm_kzalloc(dev, sizeof(*vo_grf_e), GFP_KERNEL);
+		if (!vo_grf_e)
+			return -ENOMEM;
+
+		vo_grf_e->grf	= vo_grf;
+		vo_grf_e->type	= grf_type_vo;
+		hash_add(ctx->aux_grf_table, &vo_grf_e->node, grf_type_vo);
+
+		rockchip_clk_register_branches(ctx, rk3528_vo_clk_branches,
+					       nr_vo_branches);
+	}
+
+	if (!IS_ERR(vpu_grf)) {
+		vpu_grf_e = devm_kzalloc(dev, sizeof(*vpu_grf_e), GFP_KERNEL);
+		if (!vpu_grf_e)
+			return -ENOMEM;
+
+		vpu_grf_e->grf	= vpu_grf;
+		vpu_grf_e->type	= grf_type_vpu;
+		hash_add(ctx->aux_grf_table, &vpu_grf_e->node, grf_type_vpu);
+
+		rockchip_clk_register_branches(ctx, rk3528_vpu_clk_branches,
+					       nr_vpu_branches);
+	}
 
 	rk3528_rst_init(np, reg_base);
 
