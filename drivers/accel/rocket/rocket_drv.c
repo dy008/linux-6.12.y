@@ -5,12 +5,9 @@
 #include <drm/drm_drv.h>
 #include <drm/drm_gem.h>
 #include <drm/drm_ioctl.h>
-#include <drm/drm_of.h>
 #include <drm/rocket_accel.h>
-#include <linux/array_size.h>
 #include <linux/clk.h>
-#include <linux/component.h>
-#include <linux/dma-mapping.h>
+#include <linux/err.h>
 #include <linux/iommu.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
@@ -20,29 +17,101 @@
 #include "rocket_gem.h"
 #include "rocket_job.h"
 
+/*
+ * Facade device, used to expose a single DRM device to userspace, that
+ * schedules jobs to any RKNN cores in the system.
+ */
+static struct platform_device *drm_dev;
+static struct rocket_device *rdev;
+
+static void
+rocket_iommu_domain_destroy(struct kref *kref)
+{
+	struct rocket_iommu_domain *domain = container_of(kref, struct rocket_iommu_domain, kref);
+
+	iommu_domain_free(domain->domain);
+	domain->domain = NULL;
+	kfree(domain);
+}
+
+static struct rocket_iommu_domain*
+rocket_iommu_domain_create(struct device *dev)
+{
+	struct rocket_iommu_domain *domain = kmalloc(sizeof(*domain), GFP_KERNEL);
+	void *err;
+
+	if (!domain)
+		return ERR_PTR(-ENOMEM);
+
+	domain->domain = iommu_paging_domain_alloc(dev);
+	if (IS_ERR(domain->domain)) {
+		err = ERR_CAST(domain->domain);
+		kfree(domain);
+		return err;
+	}
+	kref_init(&domain->kref);
+
+	return domain;
+}
+
+struct rocket_iommu_domain *
+rocket_iommu_domain_get(struct rocket_file_priv *rocket_priv)
+{
+	kref_get(&rocket_priv->domain->kref);
+	return rocket_priv->domain;
+}
+
+void
+rocket_iommu_domain_put(struct rocket_iommu_domain *domain)
+{
+	kref_put(&domain->kref, rocket_iommu_domain_destroy);
+}
+
 static int
 rocket_open(struct drm_device *dev, struct drm_file *file)
 {
 	struct rocket_device *rdev = to_rocket_device(dev);
 	struct rocket_file_priv *rocket_priv;
+	u64 start, end;
 	int ret;
 
+	if (!try_module_get(THIS_MODULE))
+		return -EINVAL;
+
 	rocket_priv = kzalloc(sizeof(*rocket_priv), GFP_KERNEL);
-	if (!rocket_priv)
-		return -ENOMEM;
+	if (!rocket_priv) {
+		ret = -ENOMEM;
+		goto err_put_mod;
+	}
 
 	rocket_priv->rdev = rdev;
-	rocket_priv->domain = iommu_paging_domain_alloc(dev->dev);
+	rocket_priv->domain = rocket_iommu_domain_create(rdev->cores[0].dev);
+	if (IS_ERR(rocket_priv->domain)) {
+		ret = PTR_ERR(rocket_priv->domain);
+		goto err_free;
+	}
+
 	file->driver_priv = rocket_priv;
+
+	start = rocket_priv->domain->domain->geometry.aperture_start;
+	end = rocket_priv->domain->domain->geometry.aperture_end;
+	drm_mm_init(&rocket_priv->mm, start, end - start + 1);
+	mutex_init(&rocket_priv->mm_lock);
 
 	ret = rocket_job_open(rocket_priv);
 	if (ret)
-		goto err_free;
+		goto err_mm_takedown;
 
 	return 0;
 
+err_mm_takedown:
+	mutex_destroy(&rocket_priv->mm_lock);
+	drm_mm_takedown(&rocket_priv->mm);
+	rocket_iommu_domain_put(rocket_priv->domain);
 err_free:
 	kfree(rocket_priv);
+err_put_mod:
+	module_put(THIS_MODULE);
 	return ret;
 }
 
@@ -51,9 +120,12 @@ rocket_postclose(struct drm_device *dev, struct drm_file *file)
 {
 	struct rocket_file_priv *rocket_priv = file->driver_priv;
 
-	iommu_domain_free(rocket_priv->domain);
 	rocket_job_close(rocket_priv);
+	mutex_destroy(&rocket_priv->mm_lock);
+	drm_mm_takedown(&rocket_priv->mm);
+	rocket_iommu_domain_put(rocket_priv->domain);
 	kfree(rocket_priv);
+	module_put(THIS_MODULE);
 }
 
 static const struct drm_ioctl_desc rocket_drm_driver_ioctls[] = {
@@ -84,151 +156,50 @@ static const struct drm_driver rocket_drm_driver = {
 	.desc			= "rocket DRM",
 };
 
-static int rocket_drm_bind(struct device *dev)
+static int rocket_probe(struct platform_device *pdev)
 {
-	struct device_node *core_node;
-	struct rocket_device *rdev;
-	struct drm_device *ddev;
-	unsigned int num_cores = 1;
-	int err;
-
-	rdev = devm_drm_dev_alloc(dev, &rocket_drm_driver, struct rocket_device, ddev);
-	if (IS_ERR(rdev))
-		return PTR_ERR(rdev);
-
-	ddev = &rdev->ddev;
-	dev_set_drvdata(dev, rdev);
-
-	for_each_compatible_node(core_node, NULL, "rockchip,rk3588-rknn-core")
-		if (of_device_is_available(core_node))
-			num_cores++;
-
-	rdev->cores = devm_kcalloc(dev, num_cores, sizeof(*rdev->cores), GFP_KERNEL);
-	if (IS_ERR(rdev->cores))
-		return PTR_ERR(rdev->cores);
-
-	/* Add core 0, any other cores will be added later when they are bound */
-	rdev->cores[0].rdev = rdev;
-	rdev->cores[0].dev = dev;
-	rdev->cores[0].index = 0;
-	rdev->num_cores = 1;
-
-	err = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(40));
-	if (err)
-		return err;
-
-	err = rocket_device_init(rdev);
-	if (err) {
-		dev_err_probe(dev, err, "Fatal error during NPU init\n");
-		goto err_device_fini;
+	if (rdev == NULL) {
+		/* First core probing, initialize DRM device. */
+		rdev = rocket_device_init(drm_dev, &rocket_drm_driver);
+		if (IS_ERR(rdev)) {
+			dev_err(&pdev->dev, "failed to initialize rocket device\n");
+			return PTR_ERR(rdev);
+		}
 	}
 
-	err = component_bind_all(dev, rdev);
-	if (err)
-		goto err_device_fini;
-
-	err = drm_dev_register(ddev, 0);
-	if (err < 0)
-		goto err_unbind;
-
-	return 0;
-
-err_unbind:
-	component_unbind_all(dev, rdev);
-err_device_fini:
-	rocket_device_fini(rdev);
-	return err;
-}
-
-static void rocket_drm_unbind(struct device *dev)
-{
-	struct rocket_device *rdev = dev_get_drvdata(dev);
-	struct drm_device *ddev = &rdev->ddev;
-
-	drm_dev_unregister(ddev);
-
-	component_unbind_all(dev, rdev);
-
-	rocket_device_fini(rdev);
-}
-
-const struct component_master_ops rocket_drm_ops = {
-	.bind = rocket_drm_bind,
-	.unbind = rocket_drm_unbind,
-};
-
-static int rocket_core_bind(struct device *dev, struct device *master, void *data)
-{
-	struct rocket_device *rdev = data;
 	unsigned int core = rdev->num_cores;
-	int err;
 
-	dev_set_drvdata(dev, rdev);
+	dev_set_drvdata(&pdev->dev, rdev);
 
 	rdev->cores[core].rdev = rdev;
-	rdev->cores[core].dev = dev;
+	rdev->cores[core].dev = &pdev->dev;
 	rdev->cores[core].index = core;
-	rdev->cores[core].link = device_link_add(dev, rdev->cores[0].dev,
-						 DL_FLAG_STATELESS | DL_FLAG_PM_RUNTIME);
 
 	rdev->num_cores++;
 
-	err = rocket_core_init(&rdev->cores[core]);
-	if (err) {
-		rocket_device_fini(rdev);
-		return err;
-	}
-
-	return 0;
-}
-
-static void rocket_core_unbind(struct device *dev, struct device *master, void *data)
-{
-	struct rocket_device *rdev = data;
-
-	for (unsigned int core = 1; core < rdev->num_cores; core++) {
-		if (rdev->cores[core].dev == dev) {
-			rocket_core_fini(&rdev->cores[core]);
-			device_link_del(rdev->cores[core].link);
-			break;
-		}
-	}
-}
-
-const struct component_ops rocket_core_ops = {
-	.bind = rocket_core_bind,
-	.unbind = rocket_core_unbind,
-};
-
-static int rocket_probe(struct platform_device *pdev)
-{
-	struct component_match *match = NULL;
-	struct device_node *core_node;
-
-	if (fwnode_device_is_compatible(pdev->dev.fwnode, "rockchip,rk3588-rknn-core"))
-		return component_add(&pdev->dev, &rocket_core_ops);
-
-	for_each_compatible_node(core_node, NULL, "rockchip,rk3588-rknn-core") {
-		if (!of_device_is_available(core_node))
-			continue;
-
-		drm_of_component_match_add(&pdev->dev, &match,
-					   component_compare_of, core_node);
-	}
-
-	return component_master_add_with_match(&pdev->dev, &rocket_drm_ops, match);
+	return rocket_core_init(&rdev->cores[core]);
 }
 
 static void rocket_remove(struct platform_device *pdev)
 {
-	if (fwnode_device_is_compatible(pdev->dev.fwnode, "rockchip,rk3588-rknn-core-top"))
-		component_master_del(&pdev->dev, &rocket_drm_ops);
-	else if (fwnode_device_is_compatible(pdev->dev.fwnode, "rockchip,rk3588-rknn-core"))
-		component_del(&pdev->dev, &rocket_core_ops);
+	struct device *dev = &pdev->dev;
+
+	for (unsigned int core = 0; core < rdev->num_cores; core++) {
+		if (rdev->cores[core].dev == dev) {
+			rocket_core_fini(&rdev->cores[core]);
+			rdev->num_cores--;
+			break;
+		}
+	}
+
+	if (rdev->num_cores == 0) {
+		/* Last core removed, deinitialize DRM device. */
+		rocket_device_fini(rdev);
+		rdev = NULL;
+	}
 }
 
 static const struct of_device_id dt_match[] = {
-	{ .compatible = "rockchip,rk3588-rknn-core-top" },
 	{ .compatible = "rockchip,rk3588-rknn-core" },
 	{}
 };
@@ -294,7 +265,25 @@ static struct platform_driver rocket_driver = {
 		.of_match_table = dt_match,
 	},
 };
-module_platform_driver(rocket_driver);
+
+static int __init rocket_register(void)
+{
+	drm_dev = platform_device_register_simple("rknn", -1, NULL, 0);
+	if (IS_ERR(drm_dev))
+		return PTR_ERR(drm_dev);
+
+	return platform_driver_register(&rocket_driver);
+}
+
+static void __exit rocket_unregister(void)
+{
+	platform_driver_unregister(&rocket_driver);
+
+	platform_device_unregister(drm_dev);
+}
+
+module_init(rocket_register);
+module_exit(rocket_unregister);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("DRM driver for the Rockchip NPU IP");

@@ -43,9 +43,6 @@ struct drm_rocket_create_bo {
 	__u64 offset;
 };
 
-#define ROCKET_PREP_READ        0x01
-#define ROCKET_PREP_WRITE       0x02
-
 /**
  * struct drm_rocket_prep_bo - ioctl argument for starting CPU ownership of the BO.
  *
@@ -56,8 +53,8 @@ struct drm_rocket_prep_bo {
 	/** Input: GEM handle of the buffer object. */
 	__u32 handle;
 
-	/** Input: mask of ROCKET_PREP_x, direction of the access. */
-	__u32 op;
+	/** Reserved, must be zero. */
+	__u32 reserved;
 
 	/** Input: Amount of time to wait for NPU jobs. */
 	__s64 timeout_ns;
@@ -83,13 +80,10 @@ struct drm_rocket_fini_bo {
  */
 struct drm_rocket_task {
 	/** Input: DMA address to NPU mapping of register command buffer */
-	__u64 regcmd;
+	__u32 regcmd;
 
 	/** Input: Number of commands in the register command buffer */
 	__u32 regcmd_count;
-
-	/** Reserved, must be zero. */
-	__u32 reserved;
 };
 
 /**
@@ -112,14 +106,14 @@ struct drm_rocket_job {
 	/** Input: Number of tasks passed in. */
 	__u32 task_count;
 
+	/** Input: Size in bytes of the structs in the @tasks field. */
+	__u32 task_struct_size;
+
 	/** Input: Number of input BO handles passed in (size is that times 4). */
 	__u32 in_bo_handle_count;
 
 	/** Input: Number of output BO handles passed in (size is that times 4). */
 	__u32 out_bo_handle_count;
-
-	/** Reserved, must be zero. */
-	__u32 reserved;
 };
 
 /**
@@ -134,8 +128,11 @@ struct drm_rocket_submit {
 	/** Input: Number of jobs passed in. */
 	__u32 job_count;
 
+	/** Input: Size in bytes of the structs in the @jobs field. */
+	__u32 job_struct_size;
+
 	/** Reserved, must be zero. */
-	__u32 reserved;
+	__u64 reserved;
 };
 
 #if defined(__cplusplus)

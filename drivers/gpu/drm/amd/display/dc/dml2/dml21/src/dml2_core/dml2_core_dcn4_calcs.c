@@ -1262,18 +1262,27 @@ static void CalculateDETBufferSize(
 
 static double CalculateRequiredDispclk(
 	enum dml2_odm_mode ODMMode,
-	double PixelClock)
+	double PixelClock,
+	bool isTMDS420)
 {
+	double DispClk;
 
 	if (ODMMode == dml2_odm_mode_combine_4to1) {
-		return PixelClock / 4.0;
+		DispClk = PixelClock / 4.0;
 	} else if (ODMMode == dml2_odm_mode_combine_3to1) {
-		return PixelClock / 3.0;
+		DispClk = PixelClock / 3.0;
 	} else if (ODMMode == dml2_odm_mode_combine_2to1) {
-		return PixelClock / 2.0;
+		DispClk = PixelClock / 2.0;
 	} else {
-		return PixelClock;
+		DispClk = PixelClock;
 	}
+
+	if (isTMDS420) {
+		double TMDS420MinPixClock = PixelClock / 2.0;
+		DispClk = math_max2(DispClk, TMDS420MinPixClock);
+	}
+
+	return DispClk;
 }
 
 static double TruncToValidBPP(
@@ -4088,11 +4097,12 @@ static void CalculateODMMode(
 	bool success;
 	bool UseDSC = DSCEnable && (NumberOfDSCSlices > 0);
 	enum dml2_odm_mode DecidedODMMode;
+	bool isTMDS420 = (OutFormat == dml2_420 && Output == dml2_hdmi);
 
-	SurfaceRequiredDISPCLKWithoutODMCombine = CalculateRequiredDispclk(dml2_odm_mode_bypass, PixelClock);
-	SurfaceRequiredDISPCLKWithODMCombineTwoToOne = CalculateRequiredDispclk(dml2_odm_mode_combine_2to1, PixelClock);
-	SurfaceRequiredDISPCLKWithODMCombineThreeToOne = CalculateRequiredDispclk(dml2_odm_mode_combine_3to1, PixelClock);
-	SurfaceRequiredDISPCLKWithODMCombineFourToOne = CalculateRequiredDispclk(dml2_odm_mode_combine_4to1, PixelClock);
+	SurfaceRequiredDISPCLKWithoutODMCombine = CalculateRequiredDispclk(dml2_odm_mode_bypass, PixelClock, isTMDS420);
+	SurfaceRequiredDISPCLKWithODMCombineTwoToOne = CalculateRequiredDispclk(dml2_odm_mode_combine_2to1, PixelClock, isTMDS420);
+	SurfaceRequiredDISPCLKWithODMCombineThreeToOne = CalculateRequiredDispclk(dml2_odm_mode_combine_3to1, PixelClock, isTMDS420);
+	SurfaceRequiredDISPCLKWithODMCombineFourToOne = CalculateRequiredDispclk(dml2_odm_mode_combine_4to1, PixelClock, isTMDS420);
 #ifdef __DML_VBA_DEBUG__
 	dml2_printf("DML::%s: ODMUse = %d\n", __func__, ODMUse);
 	dml2_printf("DML::%s: Output = %d\n", __func__, Output);
@@ -4651,7 +4661,10 @@ static void calculate_tdlut_setting(
 	//the tdlut is fetched during the 2 row times of prefetch.
 	if (p->setup_for_tdlut) {
 		*p->tdlut_groups_per_2row_ub = (unsigned int)math_ceil2((double) *p->tdlut_bytes_per_frame / *p->tdlut_bytes_per_group, 1);
-		*p->tdlut_opt_time = (*p->tdlut_bytes_per_frame - p->cursor_buffer_size * 1024) / tdlut_drain_rate;
+		if (*p->tdlut_bytes_per_frame > p->cursor_buffer_size * 1024)
+			*p->tdlut_opt_time = (*p->tdlut_bytes_per_frame - p->cursor_buffer_size * 1024) / tdlut_drain_rate;
+		else
+			*p->tdlut_opt_time = 0;
 		*p->tdlut_drain_time = p->cursor_buffer_size * 1024 / tdlut_drain_rate;
 	}
 

@@ -2,10 +2,14 @@
 /* Copyright 2024-2025 Tomeu Vizoso <tomeu@tomeuvizoso.net> */
 
 #include <linux/clk.h>
+#include <linux/delay.h>
 #include <linux/dev_printk.h>
+#include <linux/dma-mapping.h>
 #include <linux/err.h>
+#include <linux/iommu.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
+#include <linux/reset.h>
 
 #include "rocket_core.h"
 #include "rocket_job.h"
@@ -16,6 +20,13 @@ int rocket_core_init(struct rocket_core *core)
 	struct platform_device *pdev = to_platform_device(dev);
 	u32 version;
 	int err = 0;
+
+	core->resets[0].id = "srst_a";
+	core->resets[1].id = "srst_h";
+	err = devm_reset_control_bulk_get_exclusive(&pdev->dev, ARRAY_SIZE(core->resets),
+						    core->resets);
+	if (err)
+		return dev_err_probe(dev, err, "failed to get resets for core %d\n", core->index);
 
 	err = devm_clk_bulk_get(dev, ARRAY_SIZE(core->clks), core->clks);
 	if (err)
@@ -38,6 +49,14 @@ int rocket_core_init(struct rocket_core *core)
 		dev_err(dev, "couldn't find CORE registers %ld\n", PTR_ERR(core->core_iomem));
 		return PTR_ERR(core->core_iomem);
 	}
+
+	dma_set_max_seg_size(dev, UINT_MAX);
+
+	err = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(40));
+	if (err)
+		return err;
+
+	core->iommu_group = iommu_group_get(dev);
 
 	err = rocket_job_init(core);
 	if (err)
@@ -76,5 +95,16 @@ void rocket_core_fini(struct rocket_core *core)
 {
 	pm_runtime_dont_use_autosuspend(core->dev);
 	pm_runtime_disable(core->dev);
+	iommu_group_put(core->iommu_group);
+	core->iommu_group = NULL;
 	rocket_job_fini(core);
+}
+
+void rocket_core_reset(struct rocket_core *core)
+{
+	reset_control_bulk_assert(ARRAY_SIZE(core->resets), core->resets);
+
+	udelay(10);
+
+	reset_control_bulk_deassert(ARRAY_SIZE(core->resets), core->resets);
 }

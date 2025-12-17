@@ -575,7 +575,7 @@ static int brcm_allocate_domains(struct brcm_msi *msi)
 	struct fwnode_handle *fwnode = of_node_to_fwnode(msi->np);
 	struct device *dev = msi->dev;
 
-	msi->inner_domain = irq_domain_add_linear(NULL, msi->nr, &msi_domain_ops, msi);
+	msi->inner_domain = irq_domain_create_linear(NULL, msi->nr, &msi_domain_ops, msi);
 	if (!msi->inner_domain) {
 		dev_err(dev, "failed to create IRQ domain\n");
 		return -ENOMEM;
@@ -1935,7 +1935,7 @@ static const struct dev_pm_ops brcm_pcie_pm_ops = {
 
 static struct platform_driver brcm_pcie_driver = {
 	.probe = brcm_pcie_probe,
-	.remove_new = brcm_pcie_remove,
+	.remove = brcm_pcie_remove,
 	.driver = {
 		.name = "brcm-pcie",
 		.of_match_table = brcm_pcie_match,

@@ -12,11 +12,8 @@ maintainers:
 description:
   Rockchip IP for accelerating inference of neural networks.
 
-  There is to be a node per each core in the NPU. In Rockchip's design there
-  will be one core that is special because it is able to redistribute work to
-  the other cores by forwarding register writes and sharing data. This special
-  core is called the top core and should have the compatible string that
-  corresponds to top cores.
+  There is to be a node per each NPU core in the SoC, and each core should reference all the
+  resources that it needs to function, such as clocks, power domains, and resets.
 
 properties:
   $nodename:
@@ -24,7 +21,6 @@ properties:
 
   compatible:
     enum:
-      - rockchip,rk3588-rknn-core-top
       - rockchip,rk3588-rknn-core
 
   reg:
@@ -32,9 +28,9 @@ properties:
 
   reg-names:
     items:
-      - const: pc
-      - const: cna
-      - const: core
+      - const: pc # Program Control-related registers
+      - const: cna # Convolution Neural Network Accelerator registers
+      - const: core # Main NPU core processing unit registers
 
   clocks:
     maxItems: 4
@@ -96,18 +92,16 @@ examples:
       #size-cells = <2>;
 
       npu@fdab0000 {
-        compatible = "rockchip,rk3588-rknn-core-top";
+        compatible = "rockchip,rk3588-rknn-core";
         reg = <0x0 0xfdab0000 0x0 0x1000>,
               <0x0 0xfdab1000 0x0 0x1000>,
               <0x0 0xfdab3000 0x0 0x1000>;
         reg-names = "pc", "cna", "core";
-        assigned-clocks = <&scmi_clk SCMI_CLK_NPU>;
-        assigned-clock-rates = <200000000>;
         clocks = <&cru ACLK_NPU0>, <&cru HCLK_NPU0>,
                  <&scmi_clk SCMI_CLK_NPU>, <&cru PCLK_NPU_ROOT>;
         clock-names = "aclk", "hclk", "npu", "pclk";
         interrupts = <GIC_SPI 110 IRQ_TYPE_LEVEL_HIGH 0>;
-        iommus = <&rknn_mmu_top>;
+        iommus = <&rknn_mmu_0>;
         npu-supply = <&vdd_npu_s0>;
         power-domains = <&power RK3588_PD_NPUTOP>;
         resets = <&cru SRST_A_RKNN0>, <&cru SRST_H_RKNN0>;

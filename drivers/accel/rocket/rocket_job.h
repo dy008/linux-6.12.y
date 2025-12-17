@@ -36,7 +36,7 @@ struct rocket_job {
 	/* Fence to be signaled by IRQ handler when the job is complete. */
 	struct dma_fence *done_fence;
 
-	struct iommu_domain *domain;
+	struct rocket_iommu_domain *domain;
 
 	struct kref refcount;
 };

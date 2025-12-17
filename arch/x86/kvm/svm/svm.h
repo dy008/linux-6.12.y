@@ -324,6 +324,7 @@ struct vcpu_svm {
 	bool guest_state_loaded;
 
 	bool x2avic_msrs_intercepted;
+	bool lbr_msrs_intercepted;
 
 	/* Guest GIF value, used when vGIF is not enabled */
 	bool guest_gif;
@@ -334,6 +335,8 @@ struct svm_cpu_data {
 	u32 max_asid;
 	u32 next_asid;
 	u32 min_asid;
+
+	bool bp_spec_reduce_set;
 
 	struct vmcb *save_area;
 	unsigned long save_area_pa;

@@ -49,7 +49,7 @@ static struct dma_fence *rocket_fence_create(struct rocket_core *core)
 	if (!fence)
 		return ERR_PTR(-ENOMEM);
 
-	dma_fence_init(fence, &rocket_fence_ops, &core->job_lock,
+	dma_fence_init(fence, &rocket_fence_ops, &core->fence_lock,
 		       core->fence_context, ++core->emit_seqno);
 
 	return fence;
@@ -61,85 +61,93 @@ rocket_copy_tasks(struct drm_device *dev,
 		  struct drm_rocket_job *job,
 		  struct rocket_job *rjob)
 {
-	struct drm_rocket_task *tasks;
 	int ret = 0;
-	int i;
+
+	if (job->task_struct_size < sizeof(struct drm_rocket_task))
+		return -EINVAL;
 
 	rjob->task_count = job->task_count;
 
 	if (!rjob->task_count)
 		return 0;
 
-	tasks = kvmalloc_array(rjob->task_count, sizeof(*tasks), GFP_KERNEL);
-	if (!tasks) {
-		ret = -ENOMEM;
-		drm_dbg(dev, "Failed to allocate incoming tasks\n");
-		goto fail;
-	}
-
-	if (copy_from_user(tasks, u64_to_user_ptr(job->tasks), rjob->task_count * sizeof(*tasks))) {
-		ret = -EFAULT;
-		drm_dbg(dev, "Failed to copy incoming tasks\n");
-		goto fail;
-	}
-
 	rjob->tasks = kvmalloc_array(job->task_count, sizeof(*rjob->tasks), GFP_KERNEL);
 	if (!rjob->tasks) {
 		drm_dbg(dev, "Failed to allocate task array\n");
-		ret = -ENOMEM;
-		goto fail;
+		return -ENOMEM;
 	}
 
-	for (i = 0; i < rjob->task_count; i++) {
-		if (tasks[i].reserved != 0) {
-			drm_dbg(dev, "Reserved field in drm_rocket_task struct should be 0.\n");
-			return -EINVAL;
+	for (int i = 0; i < rjob->task_count; i++) {
+		struct drm_rocket_task task = {0};
+
+		if (copy_from_user(&task,
+				   u64_to_user_ptr(job->tasks) + i * job->task_struct_size,
+				   sizeof(task))) {
+			drm_dbg(dev, "Failed to copy incoming tasks\n");
+			ret = -EFAULT;
+			goto fail;
 		}
 
-		if (tasks[i].regcmd_count == 0) {
+		if (task.regcmd_count == 0) {
+			drm_dbg(dev, "regcmd_count field in drm_rocket_task should be > 0.\n");
 			ret = -EINVAL;
 			goto fail;
 		}
-		rjob->tasks[i].regcmd = tasks[i].regcmd;
-		rjob->tasks[i].regcmd_count = tasks[i].regcmd_count;
+
+		rjob->tasks[i].regcmd = task.regcmd;
+		rjob->tasks[i].regcmd_count = task.regcmd_count;
 	}
 
+	return 0;
+
 fail:
-	kvfree(tasks);
+	kvfree(rjob->tasks);
 	return ret;
 }
 
 static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *job)
 {
 	struct rocket_task *task;
-	bool task_pp_en = 1;
-	bool task_count = 1;
-
-	/* GO ! */
+	unsigned int extra_bit;
 
 	/* Don't queue the job if a reset is in progress */
 	if (atomic_read(&core->reset.pending))
 		return;
+
+	/* GO ! */
 
 	task = &job->tasks[job->next_task_idx];
 	job->next_task_idx++;
 
 	rocket_pc_writel(core, BASE_ADDRESS, 0x1);
 
-	rocket_cna_writel(core, S_POINTER, 0xe + 0x10000000 * core->index);
-	rocket_core_writel(core, S_POINTER, 0xe + 0x10000000 * core->index);
+	 /* From rknpu, in the TRM this bit is marked as reserved */
+	extra_bit = 0x10000000 * core->index;
+	rocket_cna_writel(core, S_POINTER, CNA_S_POINTER_POINTER_PP_EN(1) |
+					   CNA_S_POINTER_EXECUTER_PP_EN(1) |
+					   CNA_S_POINTER_POINTER_PP_MODE(1) |
+					   extra_bit);
+
+	rocket_core_writel(core, S_POINTER, CORE_S_POINTER_POINTER_PP_EN(1) |
+					    CORE_S_POINTER_EXECUTER_PP_EN(1) |
+					    CORE_S_POINTER_POINTER_PP_MODE(1) |
+					    extra_bit);
 
 	rocket_pc_writel(core, BASE_ADDRESS, task->regcmd);
-	rocket_pc_writel(core, REGISTER_AMOUNTS, (task->regcmd_count + 1) / 2 - 1);
+	rocket_pc_writel(core, REGISTER_AMOUNTS,
+			 PC_REGISTER_AMOUNTS_PC_DATA_AMOUNT((task->regcmd_count + 1) / 2 - 1));
 
 	rocket_pc_writel(core, INTERRUPT_MASK, PC_INTERRUPT_MASK_DPU_0 | PC_INTERRUPT_MASK_DPU_1);
 	rocket_pc_writel(core, INTERRUPT_CLEAR, PC_INTERRUPT_CLEAR_DPU_0 | PC_INTERRUPT_CLEAR_DPU_1);
 
-	rocket_pc_writel(core, TASK_CON, ((0x6 | task_pp_en) << 12) | task_count);
+	rocket_pc_writel(core, TASK_CON, PC_TASK_CON_RESERVED_0(1) |
+					 PC_TASK_CON_TASK_COUNT_CLEAR(1) |
+					 PC_TASK_CON_TASK_NUMBER(1) |
+					 PC_TASK_CON_TASK_PP_EN(1));
 
-	rocket_pc_writel(core, TASK_DMA_BASE_ADDR, 0x0);
+	rocket_pc_writel(core, TASK_DMA_BASE_ADDR, PC_TASK_DMA_BASE_ADDR_DMA_BASE_ADDR(0x0));
 
-	rocket_pc_writel(core, OPERATION_ENABLE, 0x1);
+	rocket_pc_writel(core, OPERATION_ENABLE, PC_OPERATION_ENABLE_OP_EN(1));
 
 	dev_dbg(core->dev, "Submitted regcmd at 0x%llx to core %d", task->regcmd, core->index);
 }
@@ -225,6 +233,8 @@ static void rocket_job_cleanup(struct kref *ref)
 						refcount);
 	unsigned int i;
 
+	rocket_iommu_domain_put(job->domain);
+
 	dma_fence_put(job->done_fence);
 	dma_fence_put(job->inference_done_fence);
 
@@ -242,7 +252,7 @@ static void rocket_job_cleanup(struct kref *ref)
 		kvfree(job->out_bos);
 	}
 
-	kfree(job->tasks);
+	kvfree(job->tasks);
 
 	kfree(job);
 }
@@ -287,7 +297,7 @@ static struct dma_fence *rocket_job_run(struct drm_sched_job *sched_job)
 
 	/*
 	 * Nothing to execute: can happen if the job has finished while
-	 * we were resetting the GPU.
+	 * we were resetting the NPU.
 	 */
 	if (job->next_task_idx == job->task_count)
 		return NULL;
@@ -304,11 +314,11 @@ static struct dma_fence *rocket_job_run(struct drm_sched_job *sched_job)
 	if (ret < 0)
 		return fence;
 
-	ret = iommu_attach_group(job->domain, iommu_group_get(core->dev));
+	ret = iommu_attach_group(job->domain->domain, core->iommu_group);
 	if (ret < 0)
 		return fence;
 
-	scoped_guard(spinlock, &core->job_lock) {
+	scoped_guard(mutex, &core->job_lock) {
 		core->in_flight_job = job;
 		rocket_job_hw_submit(core, job);
 	}
@@ -316,114 +326,57 @@ static struct dma_fence *rocket_job_run(struct drm_sched_job *sched_job)
 	return fence;
 }
 
-static void rocket_job_handle_done(struct rocket_core *core,
-				   struct rocket_job *job)
-{
-	if (job->next_task_idx < job->task_count) {
-		rocket_job_hw_submit(core, job);
-		return;
-	}
-
-	core->in_flight_job = NULL;
-	iommu_detach_group(NULL, iommu_group_get(core->dev));
-	dma_fence_signal_locked(job->done_fence);
-	pm_runtime_put_autosuspend(core->dev);
-}
-
 static void rocket_job_handle_irq(struct rocket_core *core)
 {
-	u32 status, raw_status;
-
 	pm_runtime_mark_last_busy(core->dev);
-
-	status = rocket_pc_readl(core, INTERRUPT_STATUS);
-	raw_status = rocket_pc_readl(core, INTERRUPT_RAW_STATUS);
 
 	rocket_pc_writel(core, OPERATION_ENABLE, 0x0);
 	rocket_pc_writel(core, INTERRUPT_CLEAR, 0x1ffff);
 
-	scoped_guard(spinlock, &core->job_lock)
-		if (core->in_flight_job)
-			rocket_job_handle_done(core, core->in_flight_job);
+	scoped_guard(mutex, &core->job_lock)
+		if (core->in_flight_job) {
+			if (core->in_flight_job->next_task_idx < core->in_flight_job->task_count) {
+				rocket_job_hw_submit(core, core->in_flight_job);
+				return;
+			}
+
+			iommu_detach_group(NULL, iommu_group_get(core->dev));
+			dma_fence_signal(core->in_flight_job->done_fence);
+			pm_runtime_put_autosuspend(core->dev);
+			core->in_flight_job = NULL;
+		}
 }
 
 static void
 rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
 {
-	bool cookie;
-
 	if (!atomic_read(&core->reset.pending))
 		return;
 
-	/*
-	 * Stop the scheduler.
-	 *
-	 * FIXME: We temporarily get out of the dma_fence_signalling section
-	 * because the cleanup path generate lockdep splats when taking locks
-	 * to release job resources. We should rework the code to follow this
-	 * pattern:
-	 *
-	 *	try_lock
-	 *	if (locked)
-	 *		release
-	 *	else
-	 *		schedule_work_to_release_later
-	 */
 	drm_sched_stop(&core->sched, bad);
-
-	cookie = dma_fence_begin_signalling();
-
-	if (bad)
-		drm_sched_increase_karma(bad);
-
-	/*
-	 * Mask job interrupts and synchronize to make sure we won't be
-	 * interrupted during our reset.
-	 */
-	rocket_pc_writel(core, INTERRUPT_MASK, 0x0);
-	synchronize_irq(core->irq);
-
-	/* Handle the remaining interrupts before we reset. */
-	rocket_job_handle_irq(core);
 
 	/*
 	 * Remaining interrupts have been handled, but we might still have
 	 * stuck jobs. Let's make sure the PM counters stay balanced by
-	 * manually calling pm_runtime_put_noidle() and
-	 * rocket_devfreq_record_idle() for each stuck job.
-	 * Let's also make sure the cycle counting register's refcnt is
-	 * kept balanced to prevent it from running forever
+	 * manually calling pm_runtime_put_noidle().
 	 */
-	scoped_guard(spinlock, &core->job_lock) {
+	scoped_guard(mutex, &core->job_lock) {
 		if (core->in_flight_job)
 			pm_runtime_put_noidle(core->dev);
+
+		iommu_detach_group(NULL, core->iommu_group);
 
 		core->in_flight_job = NULL;
 	}
 
 	/* Proceed with reset now. */
-	pm_runtime_force_suspend(core->dev);
-	pm_runtime_force_resume(core->dev);
+	rocket_core_reset(core);
 
-	/* GPU has been reset, we can clear the reset pending bit. */
+	/* NPU has been reset, we can clear the reset pending bit. */
 	atomic_set(&core->reset.pending, 0);
-
-	/*
-	 * Now resubmit jobs that were previously queued but didn't have a
-	 * chance to finish.
-	 * FIXME: We temporarily get out of the DMA fence signalling section
-	 * while resubmitting jobs because the job submission logic will
-	 * allocate memory with the GFP_KERNEL flag which can trigger memory
-	 * reclaim and exposes a lock ordering issue.
-	 */
-	dma_fence_end_signalling(cookie);
-	drm_sched_resubmit_jobs(&core->sched);
-	cookie = dma_fence_begin_signalling();
 
 	/* Restart the scheduler */
 	drm_sched_start(&core->sched, 0);
-
-	dma_fence_end_signalling(cookie);
 }
 
 static enum drm_gpu_sched_stat rocket_job_timedout(struct drm_sched_job *sched_job)
@@ -432,34 +385,10 @@ static enum drm_gpu_sched_stat rocket_job_timedout(struct drm_sched_job *sched_j
 	struct rocket_device *rdev = job->rdev;
 	struct rocket_core *core = sched_to_core(rdev, sched_job->sched);
 
-	/*
-	 * If the GPU managed to complete this jobs fence, the timeout is
-	 * spurious. Bail out.
-	 */
-	if (dma_fence_is_signaled(job->done_fence))
-		return DRM_GPU_SCHED_STAT_NOMINAL;
-
-	/*
-	 * Rocket IRQ handler may take a long time to process an interrupt
-	 * if there is another IRQ handler hogging the processing.
-	 * For example, the HDMI encoder driver might be stuck in the IRQ
-	 * handler for a significant time in a case of bad cable connection.
-	 * In order to catch such cases and not report spurious rocket
-	 * job timeouts, synchronize the IRQ handler and re-check the fence
-	 * status.
-	 */
-	synchronize_irq(core->irq);
-
-	if (dma_fence_is_signaled(job->done_fence)) {
-		dev_warn(core->dev, "unexpectedly high interrupt latency\n");
-		return DRM_GPU_SCHED_STAT_NOMINAL;
-	}
-
-	dev_err(core->dev, "gpu sched timeout");
+	dev_err(core->dev, "NPU job timed out");
 
 	atomic_set(&core->reset.pending, 1);
 	rocket_reset(core, sched_job);
-	iommu_detach_group(NULL, iommu_group_get(core->dev));
 
 	return DRM_GPU_SCHED_STAT_NOMINAL;
 }
@@ -517,7 +446,8 @@ int rocket_job_init(struct rocket_core *core)
 	int ret;
 
 	INIT_WORK(&core->reset.work, rocket_reset_work);
-	spin_lock_init(&core->job_lock);
+	spin_lock_init(&core->fence_lock);
+	mutex_init(&core->job_lock);
 
 	core->irq = platform_get_irq(to_platform_device(core->dev), 0);
 	if (core->irq < 0)
@@ -526,7 +456,7 @@ int rocket_job_init(struct rocket_core *core)
 	ret = devm_request_threaded_irq(core->dev, core->irq,
 					rocket_job_irq_handler,
 					rocket_job_irq_handler_thread,
-					IRQF_SHARED, KBUILD_MODNAME "-job",
+					IRQF_SHARED, dev_name(core->dev),
 					core);
 	if (ret) {
 		dev_err(core->dev, "failed to request job irq");
@@ -644,7 +574,7 @@ static int rocket_ioctl_submit_job(struct drm_device *dev, struct drm_file *file
 
 	rjob->out_bo_count = job->out_bo_handle_count;
 
-	rjob->domain = file_priv->domain;
+	rjob->domain = rocket_iommu_domain_get(file_priv);
 
 	ret = rocket_job_push(rjob);
 	if (ret)
@@ -666,6 +596,14 @@ int rocket_ioctl_submit(struct drm_device *dev, void *data, struct drm_file *fil
 	int ret = 0;
 	unsigned int i = 0;
 
+	if (args->job_count == 0)
+		return 0;
+
+	if (args->job_struct_size < sizeof(struct drm_rocket_job)) {
+		drm_dbg(dev, "job_struct_size field in drm_rocket_submit struct is too small.\n");
+		return -EINVAL;
+	}
+
 	if (args->reserved != 0) {
 		drm_dbg(dev, "Reserved field in drm_rocket_submit struct should be 0.\n");
 		return -EINVAL;
@@ -677,21 +615,19 @@ int rocket_ioctl_submit(struct drm_device *dev, void *data, struct drm_file *fil
 		return -ENOMEM;
 	}
 
-	if (copy_from_user(jobs, u64_to_user_ptr(args->jobs),
-			   args->job_count * sizeof(*jobs))) {
-		ret = -EFAULT;
-		drm_dbg(dev, "Failed to copy incoming job array\n");
-		goto exit;
-	}
-
 	for (i = 0; i < args->job_count; i++) {
-		if (jobs[i].reserved != 0) {
-			drm_dbg(dev, "Reserved field in drm_rocket_job struct should be 0.\n");
-			return -EINVAL;
+		if (copy_from_user(&jobs[i],
+				   u64_to_user_ptr(args->jobs) + i * args->job_struct_size,
+				   sizeof(*jobs))) {
+			ret = -EFAULT;
+			drm_dbg(dev, "Failed to copy incoming job array\n");
+			goto exit;
 		}
-
-		rocket_ioctl_submit_job(dev, file, &jobs[i]);
 	}
+
+
+	for (i = 0; i < args->job_count; i++)
+		rocket_ioctl_submit_job(dev, file, &jobs[i]);
 
 exit:
 	kfree(jobs);

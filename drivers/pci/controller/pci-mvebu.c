@@ -1078,9 +1078,9 @@ static int mvebu_pcie_init_irq_domain(struct mvebu_pcie_port *port)
 		return -ENODEV;
 	}
 
-	port->intx_irq_domain = irq_domain_add_linear(pcie_intc_node, PCI_NUM_INTX,
-						      &mvebu_pcie_intx_irq_domain_ops,
-						      port);
+	port->intx_irq_domain = irq_domain_create_linear(of_fwnode_handle(pcie_intc_node),
+							 PCI_NUM_INTX,
+							 &mvebu_pcie_intx_irq_domain_ops, port);
 	of_node_put(pcie_intc_node);
 	if (!port->intx_irq_domain) {
 		dev_err(dev, "Failed to get INTx IRQ domain for %s\n", port->name);
@@ -1727,7 +1727,7 @@ static struct platform_driver mvebu_pcie_driver = {
 		.pm = &mvebu_pcie_pm_ops,
 	},
 	.probe = mvebu_pcie_probe,
-	.remove_new = mvebu_pcie_remove,
+	.remove = mvebu_pcie_remove,
 };
 module_platform_driver(mvebu_pcie_driver);
 

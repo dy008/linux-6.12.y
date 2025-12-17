@@ -333,16 +333,11 @@
 };
 
 &usb_host0_xhci {
-	dr_mode = "otg";
-	phys = <&usb2phy0_otg>;
-	phy-names = "usb2-phy";
+	dr_mode = "host";
 	status = "okay";
 };
 
 &usb_host1_xhci {
-	dr_mode = "host";
-	phys = <&usb2phy0_host>, <&combphy1 PHY_TYPE_USB3>;
-	phy-names = "usb2-phy", "usb3-phy";
 	status = "okay";
 };
 
@@ -427,6 +422,18 @@
 	status = "okay";
 };
 
+&vepu {
+	status = "okay";
+};
+
+&vepu_mmu {
+	status = "okay";
+};
+
+&rga {
+	status = "okay";
+};
+
 &usb2phy0 {
 	status = "okay";
 };
@@ -437,7 +444,6 @@
 };
 
 &usb2phy0_otg {
-	phy-supply = <&vcc5v0_usb_host>;
 	status = "okay";
 };
 

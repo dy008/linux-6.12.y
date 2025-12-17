@@ -669,7 +669,7 @@ static int altera_pcie_init_irq_domain(struct altera_pcie *pcie)
 	struct device_node *node = dev->of_node;
 
 	/* Setup INTx */
-	pcie->irq_domain = irq_domain_add_linear(node, PCI_NUM_INTX,
+	pcie->irq_domain = irq_domain_create_linear(of_fwnode_handle(node), PCI_NUM_INTX,
 					&intx_domain_ops, pcie);
 	if (!pcie->irq_domain) {
 		dev_err(dev, "Failed to get a INTx IRQ domain\n");
@@ -815,10 +815,10 @@ static void altera_pcie_remove(struct platform_device *pdev)
 }
 
 static struct platform_driver altera_pcie_driver = {
-	.probe		= altera_pcie_probe,
-	.remove_new	= altera_pcie_remove,
+	.probe = altera_pcie_probe,
+	.remove = altera_pcie_remove,
 	.driver = {
-		.name	= "altera-pcie",
+		.name = "altera-pcie",
 		.of_match_table = altera_pcie_of_match,
 	},
 };

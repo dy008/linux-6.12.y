@@ -12,6 +12,7 @@
 #include <linux/module.h>
 #include <linux/phy.h>
 #include <linux/of.h>
+#include <linux/property.h>
 
 #define PHY_ID_YT8511		0x0000010a
 #define PHY_ID_YT8521		0x0000011a
@@ -167,6 +168,13 @@
 #define YT8531_RGMII_LDO_VOL_MASK		GENMASK(5, 4)
 #define YT8531_LDO_VOL_3V3			0x0
 #define YT8531_LDO_VOL_1V8			0x2
+
+/* 0xA00B, 0xA00C, 0xA00D, 0xA00E, 0xA00F are LED registres */
+#define YT8531_LED_GENERAL_CFG	0xA00B
+#define YT8531_LED0_CFG		0xA00C
+#define YT8531_LED1_CFG		0xA00D
+#define YT8531_LED2_CFG		0xA00E
+#define YT8531_LED_BLINK_CFG	0xA00F
 
 /* 1b0 disable 1.9ns rxc clock delay  *default*
  * 1b1 enable 1.9ns rxc clock delay
@@ -1155,6 +1163,49 @@ static int yt8531_probe(struct phy_device *phydev)
 	struct device_node *node = phydev->mdio.dev.of_node;
 	u16 mask, val;
 	u32 freq;
+	u32 led_data;
+	int ret;
+
+	/* Configure LED registers if properties exist */
+	if (!device_property_read_u32(&phydev->mdio.dev, "motorcomm,yt8531-led-general-cfg", &led_data)) {
+		ret = ytphy_write_ext(phydev, YT8531_LED_GENERAL_CFG, led_data);
+		if (ret < 0)
+			dev_warn(&phydev->mdio.dev, "Failed to set LED general config: %d\n", ret);
+		else
+			dev_dbg(&phydev->mdio.dev, "Set LED general config: 0x%04x\n", led_data);
+	}
+
+	if (!device_property_read_u32(&phydev->mdio.dev, "motorcomm,yt8531-led0-cfg", &led_data)) {
+		ret = ytphy_write_ext(phydev, YT8531_LED0_CFG, led_data);
+		if (ret < 0)
+			dev_warn(&phydev->mdio.dev, "Failed to set LED0 config: %d\n", ret);
+		else
+			dev_dbg(&phydev->mdio.dev,  "Set LED0 config: 0x%04x\n", led_data);
+	}
+
+	if (!device_property_read_u32(&phydev->mdio.dev, "motorcomm,yt8531-led1-cfg", &led_data)) {
+		ret = ytphy_write_ext(phydev, YT8531_LED1_CFG, led_data);
+		if (ret < 0)
+			dev_warn(&phydev->mdio.dev, "Failed to set LED1 config: %d\n", ret);
+		else
+			dev_dbg(&phydev->mdio.dev,  "Set LED1 config: 0x%04x\n", led_data);
+	}
+
+	if (!device_property_read_u32(&phydev->mdio.dev, "motorcomm,yt8531-led2-cfg", &led_data)) {
+		ret = ytphy_write_ext(phydev, YT8531_LED2_CFG, led_data);
+		if (ret < 0)
+			dev_warn(&phydev->mdio.dev, "Failed to set LED2 config: %d\n", ret);
+		else
+			dev_dbg(&phydev->mdio.dev,  "Set LED2 config: 0x%04x\n", led_data);
+	}
+
+	if (!device_property_read_u32(&phydev->mdio.dev, "motorcomm,yt8531-led-blink-cfg", &led_data)) {
+		ret = ytphy_write_ext(phydev, YT8531_LED_BLINK_CFG, led_data);
+		if (ret < 0)
+			dev_warn(&phydev->mdio.dev, "Failed to set LED2 config: %d\n", ret);
+		else
+			dev_dbg(&phydev->mdio.dev,  "Set LED blink config: 0x%04x\n", led_data);
+	}
 
 	if (of_property_read_u32(node, "motorcomm,clk-out-frequency-hz", &freq))
 		freq = YTPHY_DTS_OUTPUT_CLK_DIS;

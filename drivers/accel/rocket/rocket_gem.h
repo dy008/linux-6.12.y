@@ -9,10 +9,12 @@
 struct rocket_gem_object {
 	struct drm_gem_shmem_object base;
 
-	struct iommu_domain *domain;
+	struct rocket_file_priv *driver_priv;
+
+	struct rocket_iommu_domain *domain;
+	struct drm_mm_node mm;
 	size_t size;
 	u32 offset;
-	u32 last_cpu_prep_op;
 };
 
 struct drm_gem_object *rocket_gem_create_object(struct drm_device *dev, size_t size);

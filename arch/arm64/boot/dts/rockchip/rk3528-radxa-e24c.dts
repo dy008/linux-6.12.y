@@ -79,8 +79,6 @@
 	vcc5v0_host: regulator-vcc5v0-host {
 		compatible = "regulator-fixed";
 		regulator-name = "vcc5v0_host";
-		regulator-boot-on;
-		regulator-always-on;
 		regulator-min-microvolt = <5000000>;
 		regulator-max-microvolt = <5000000>;
 		enable-active-high;
@@ -372,8 +370,8 @@
 				};
 			};
 
-			vcc_18emmc: LDO_REG2 {
-				regulator-name = "vcc_18emmc";
+			vcc_1v8_emmc: LDO_REG2 {
+				regulator-name = "vcc_1v8_emmc";
 				regulator-min-microvolt = <1800000>;
 				regulator-max-microvolt = <1800000>;
 				regulator-boot-on;
@@ -500,7 +498,7 @@
 	//mmc-hs400-1_8v;
 	//mmc-hs400-enhanced-strobe;
 	vmmc-supply = <&vcc_3v3_s3>;
-	vqmmc-supply = <&vcc_18emmc>;
+	vqmmc-supply = <&vcc_1v8_emmc>;
 	status = "okay";
 };
 
@@ -515,8 +513,37 @@
 	status = "okay";
 };
 
+&u2phy {
+	status = "okay";
+};
+
+&u2phy_host {
+	phy-supply = <&vcc5v0_host>;
+	status = "okay";
+};
+
+&u2phy_otg {
+	status = "okay";
+};
+
 &uart0 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&uart0m0_xfer>;
+	status = "okay";
+};
+
+&usb_host0_ehci {
+	status = "okay";
+};
+
+&usb_host0_ohci {
+	status = "okay";
+};
+
+&usb_host0_xhci {
+	extcon = <&u2phy>;
+	maximum-speed = "high-speed";
+	phys = <&u2phy_otg>;
+	phy-names = "usb2-phy";
 	status = "okay";
 };

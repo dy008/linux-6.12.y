@@ -498,8 +498,7 @@ static int nwl_pcie_init_msi_irq_domain(struct nwl_pcie *pcie)
 	struct fwnode_handle *fwnode = of_node_to_fwnode(dev->of_node);
 	struct nwl_msi *msi = &pcie->msi;
 
-	msi->dev_domain = irq_domain_add_linear(NULL, INT_PCI_MSI_NR,
-						&dev_msi_domain_ops, pcie);
+	msi->dev_domain = irq_domain_create_linear(NULL, INT_PCI_MSI_NR, &dev_msi_domain_ops, pcie);
 	if (!msi->dev_domain) {
 		dev_err(dev, "failed to create dev IRQ domain\n");
 		return -ENOMEM;
@@ -582,10 +581,8 @@ static int nwl_pcie_init_irq_domain(struct nwl_pcie *pcie)
 		return -EINVAL;
 	}
 
-	pcie->intx_irq_domain = irq_domain_add_linear(intc_node,
-						      PCI_NUM_INTX,
-						      &intx_domain_ops,
-						      pcie);
+	pcie->intx_irq_domain = irq_domain_create_linear(of_fwnode_handle(intc_node), PCI_NUM_INTX,
+							 &intx_domain_ops, pcie);
 	of_node_put(intc_node);
 	if (!pcie->intx_irq_domain) {
 		dev_err(dev, "failed to create IRQ domain\n");
@@ -721,9 +718,10 @@ static int nwl_pcie_bridge_init(struct nwl_pcie *pcie)
 	nwl_bridge_writel(pcie, nwl_bridge_readl(pcie, E_ECAM_CONTROL) |
 			  E_ECAM_CR_ENABLE, E_ECAM_CONTROL);
 
-	nwl_bridge_writel(pcie, nwl_bridge_readl(pcie, E_ECAM_CONTROL) |
-			  (NWL_ECAM_MAX_SIZE << E_ECAM_SIZE_SHIFT),
-			  E_ECAM_CONTROL);
+	ecam_val = nwl_bridge_readl(pcie, E_ECAM_CONTROL);
+	ecam_val &= ~E_ECAM_SIZE_LOC;
+	ecam_val |= NWL_ECAM_MAX_SIZE << E_ECAM_SIZE_SHIFT;
+	nwl_bridge_writel(pcie, ecam_val, E_ECAM_CONTROL);
 
 	nwl_bridge_writel(pcie, lower_32_bits(pcie->phys_ecam_base),
 			  E_ECAM_BASE_LO);
@@ -916,6 +914,6 @@ static struct platform_driver nwl_pcie_driver = {
 		.of_match_table = nwl_pcie_of_match,
 	},
 	.probe = nwl_pcie_probe,
-	.remove_new = nwl_pcie_remove,
+	.remove = nwl_pcie_remove,
 };
 builtin_platform_driver(nwl_pcie_driver);

@@ -134,6 +134,33 @@
 		regulator-max-microvolt = <5000000>;
 	};
 
+	vcc5v0_usb20: regulator-5v0-vcc-usb20 {
+		compatible = "regulator-fixed";
+		enable-active-high;
+		gpios = <&gpio0 RK_PA1 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&usb_host_en>;
+		regulator-name = "vcc5v0_usb20";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		vin-supply = <&vcc5v0_sys>;
+	};
+
+	/* In radxa_e20c_x1000_schematic.pdf, GPIO4 RK_PB4 is used as USB20_HOST_EN. */
+	vcc5v0_usb20_x1: regulator-5v0-vcc-usb20-x1 {
+		compatible = "regulator-fixed";
+		enable-active-high;
+		gpios = <&gpio4 RK_PB4 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&usb_host_en_x1>;
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-name = "vcc5v0_usb20_x1";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		vin-supply = <&vcc5v0_sys>;
+	};
+
 	vccio_sd: regulator-vccio-sd {
 		compatible = "regulator-gpio";
 		gpios = <&gpio4 RK_PB6 GPIO_ACTIVE_HIGH>;
@@ -171,6 +198,10 @@
 	};
 };
 
+&combphy {
+	status = "okay";
+};
+
 &cpu0 {
 	cpu-supply = <&vdd_arm>;
 };
@@ -191,21 +222,53 @@
 	clock_in_out = "output";
 	label = "eth0";
 	phy-handle = <&rgmii_phy>;
-	phy-mode = "rgmii";
+	phy-mode = "rgmii-id";
 	phy-supply = <&vcc_3v3>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&rgmii_miim>, <&rgmii_tx_bus2>, <&rgmii_rx_bus2>,
-		    <&rgmii_rgmii_clk>, <&rgmii_rgmii_bus>;
+		    <&rgmii_rgmii_clk>, <&rgmii_rgmii_bus>, <&gmac1_rstn_l>;
 
 	tx_delay = <0x2e>;
 	rx_delay = <0x16>;
 
 	snps,reset-gpio = <&gpio4 RK_PC2 GPIO_ACTIVE_LOW>;
 	snps,reset-active-low;
-	/* Reset time is 50ms, 200ms for yt8531 */
-	snps,reset-delays-us = <0 50000 200000>;
+	/* Reset time is 20ms, 100ms for yt8531 */
+	snps,reset-delays-us = <0 20000 100000>;
 
 	status = "okay";
+};
+
+&gpu {
+	mali-supply = <&vdd_logic>;
+	status = "okay";
+};
+
+&i2c0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c0m1_xfer>;
+	status = "okay";
+
+	hym8563: hym8563@51 {
+		compatible = "haoyu,hym8563";
+		reg = <0x51>;
+		#clock-cells = <0>;
+		clock-frequency = <32768>;
+		clock-output-names = "hym8563";
+		pinctrl-names = "default";
+		pinctrl-0 = <&hym8563_int>;
+		interrupt-parent = <&gpio4>;
+		interrupts = <RK_PA7 IRQ_TYPE_LEVEL_LOW>;
+		wakeup-source;
+	};
+};
+
+&i2c0m1_xfer {
+	rockchip,pins =
+			/* i2c0_scl_m1 */
+			<4 RK_PA1 2 &pcfg_pull_up>,
+			/* i2c0_sda_m1 */
+			<4 RK_PA0 2 &pcfg_pull_up>;
 };
 
 &i2c1 {
@@ -223,14 +286,39 @@
 };
 
 &mdio1 {
+	/* Motorcomm YT8531 (Rockchip RK631) */
 	rgmii_phy: ethernet-phy@1 {
 		compatible = "ethernet-phy-ieee802.3-c22";
 		reg = <0x1>;
-		//pinctrl-names = "default";
-		//pinctrl-0 = <&gmac1_rstn_l>;
-		//reset-assert-us = <20000>;
-		//reset-deassert-us = <100000>;
-		//reset-gpios = <&gpio4 RK_PC2 GPIO_ACTIVE_LOW>;
+
+		motorcomm,yt8531-led0-cfg = <0x0000>;  /* LED0: Disabled */
+		motorcomm,yt8531-led1-cfg = <0x2600>;  /* LED1(G): Activity */
+		motorcomm,yt8531-led2-cfg = <0x0070>;  /* LED2(Y): Link - 10/100/1000M */
+	};
+};
+
+&pcie {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pciem1_pins>;
+	reset-gpios = <&gpio1 RK_PA2 GPIO_ACTIVE_HIGH>;
+	vpcie3v3-supply = <&vcc_3v3>;
+	status = "okay";
+
+	pcie@0,0 {
+		reg = <0x000000 0 0 0 0>;
+		#address-cells = <3>;
+		#size-cells = <2>;
+
+		bus-range = <0x0 0xf>;
+		device_type = "pci";
+		ranges;
+
+		pcie_eth: pcie-eth@0,0 {
+			compatible = "pci10ec,8168";
+			label = "eth1";
+			reg = <0x000000 0 0 0 0>;
+			realtek,led-data = <0x78>;
+		};
 	};
 };
 
@@ -244,6 +332,12 @@
 	gpio-keys {
 		user_key: user-key {
 			rockchip,pins = <0 RK_PA0 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+	};
+
+	hym8563 {
+		hym8563_int: hym8563-int {
+			rockchip,pins = <4 RK_PA7 RK_FUNC_GPIO &pcfg_pull_none>;
 		};
 	};
 
@@ -264,6 +358,16 @@
 	sdmmc {
 		sdmmc_vol_ctrl_h: sdmmc-vol-ctrl-h {
 			rockchip,pins = <4 RK_PB6 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+	};
+
+	usb {
+		usb_host_en: usb-host-en {
+			rockchip,pins = <0 RK_PA1 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+
+		usb_host_en_x1: usb-host-en-x1 {
+			rockchip,pins = <4 RK_PB4 RK_FUNC_GPIO &pcfg_pull_none>;
 		};
 	};
 };
@@ -288,10 +392,10 @@
 &sdhci {
 	bus-width = <8>;
 	cap-mmc-highspeed;
+	mmc-hs200-1_8v;
 	no-sd;
 	no-sdio;
 	non-removable;
-	mmc-hs200-1_8v;
 	//mmc-hs400-1_8v;
 	//mmc-hs400-enhanced-strobe;
 	vmmc-supply = <&vcc_3v3>;
@@ -304,15 +408,49 @@
 	max-frequency = <150000000>;
 	cap-mmc-highspeed;
 	cap-sd-highspeed;
+	pinctrl-names = "default";
+	pinctrl-0 = <&sdmmc_clk &sdmmc_cmd &sdmmc_det &sdmmc_bus4>;
 	disable-wp;
+	sd-uhs-sdr25;
+	sd-uhs-sdr50;
+	sd-uhs-ddr50;
 	sd-uhs-sdr104;
 	vmmc-supply = <&vcc_3v3>;
 	vqmmc-supply = <&vccio_sd>;
 	status = "okay";
 };
 
+&u2phy {
+	status = "okay";
+};
+
+&u2phy_host {
+	phy-supply = <&vcc5v0_usb20>;
+	status = "okay";
+};
+
+&u2phy_otg {
+	status = "okay";
+};
+
 &uart0 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&uart0m0_xfer>;
+	status = "okay";
+};
+
+&usb_host0_ehci {
+	status = "okay";
+};
+
+&usb_host0_ohci {
+	status = "okay";
+};
+
+&usb_host0_xhci {
+	extcon = <&u2phy>;
+	maximum-speed = "high-speed";
+	phys = <&u2phy_otg>;
+	phy-names = "usb2-phy";
 	status = "okay";
 };

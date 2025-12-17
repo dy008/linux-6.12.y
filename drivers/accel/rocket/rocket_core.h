@@ -8,6 +8,7 @@
 #include <linux/clk.h>
 #include <linux/io.h>
 #include <linux/mutex_types.h>
+#include <linux/reset.h>
 
 #include "rocket_registers.h"
 
@@ -29,7 +30,6 @@
 struct rocket_core {
 	struct device *dev;
 	struct rocket_device *rdev;
-	struct device_link *link;
 	unsigned int index;
 
 	int irq;
@@ -37,10 +37,14 @@ struct rocket_core {
 	void __iomem *cna_iomem;
 	void __iomem *core_iomem;
 	struct clk_bulk_data clks[4];
+	struct reset_control_bulk_data resets[2];
 
+	struct iommu_group *iommu_group;
+
+	struct mutex job_lock;
 	struct rocket_job *in_flight_job;
 
-	spinlock_t job_lock;
+	spinlock_t fence_lock;
 
 	struct {
 		struct workqueue_struct *wq;
@@ -55,5 +59,6 @@ struct rocket_core {
 
 int rocket_core_init(struct rocket_core *core);
 void rocket_core_fini(struct rocket_core *core);
+void rocket_core_reset(struct rocket_core *core);
 
 #endif

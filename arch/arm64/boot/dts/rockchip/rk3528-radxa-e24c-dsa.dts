@@ -1,0 +1,104 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * Copyright (c) 2022 Rockchip Electronics Co., Ltd.
+ * Copyright (c) 2024 Radxa Computer (Shenzhen) Co., Ltd.
+ *
+ */
+
+/dts-v1/;
+
+#include "rk3528-radxa-e24c.dts"
+
+/ {
+	/delete-node/ switch0;
+};
+
+&mdio1 {
+	switch0: switch0@29 {
+		compatible = "realtek,rtl8367rb", "realtek,rtl8365mb";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		reg = <29 0>;
+		dsa,member = <1 0>;
+		reset = <&gpio4 RK_PC2 GPIO_ACTIVE_LOW>;
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				reg = <0>;
+				label = "lan3";
+				local-mac-address = [00 48 54 20 00 03];
+				phy-handle = <&phy0>;
+			};
+
+			port@1 {
+				reg = <1>;
+				label = "lan2";
+				local-mac-address = [00 48 54 20 00 02];
+				phy-handle = <&phy1>;
+			};
+
+			port@2 {
+				reg = <2>;
+				label = "lan1";
+				local-mac-address = [00 48 54 20 00 01];
+				phy-handle = <&phy2>;
+			};
+
+			port@3 {
+				reg = <3>;
+				label = "wan";
+				local-mac-address = [00 48 54 20 00 00];
+				phy-handle = <&phy3>;
+			};
+
+			rtl8367rb_cpu_port: port@6 {
+				reg = <6>;
+				label = "cpu";
+				ethernet = <&gmac1>;
+				local-mac-address = [00 48 54 20 00 33];
+				phy-mode = "rgmii";
+				tx-internal-delay-ps = <2000>;
+				rx-internal-delay-ps = <2000>;
+
+				fixed-link {
+					speed = <1000>;
+					full-duplex;
+					pause;
+				};
+			};
+		};
+
+		mdio {
+			compatible = "realtek,smi-mdio";
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			phy0: phy@0 {
+				reg = <0>;
+			};
+
+			phy1: phy@1 {
+				reg = <1>;
+			};
+
+			phy2: phy@2 {
+				reg = <2>;
+			};
+
+			phy3: phy@3 {
+				reg = <3>;
+			};
+		};
+	};
+};
+
+&gmac1 {
+	/delete-property/ snps,tso;
+	label = "eth0";
+
+	tx_delay = <0>;
+	rx_delay = <0>;
+};

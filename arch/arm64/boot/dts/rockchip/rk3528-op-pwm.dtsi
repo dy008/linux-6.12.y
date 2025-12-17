@@ -1,0 +1,22 @@
+/* This can be used for overclocking on the RK3528 development board, which uses a PWM power supply. */
+&cpu_opp_table {
+	opp-1200000000 {
+		opp-microvolt = <935000 935000 1200000>;
+	};
+
+	opp-1416000000 {
+		opp-microvolt = <1002500 1002500 1200000>;
+	};
+
+	opp-1608000000 {
+		opp-microvolt = <1072500 1072500 1200000>;
+	};
+
+	opp-1800000000 {
+		opp-microvolt = <1142500 1142500 1200000>;
+	};
+
+	opp-2016000000 {
+		opp-microvolt = <1200000 1200000 1200000>;
+	};
+};

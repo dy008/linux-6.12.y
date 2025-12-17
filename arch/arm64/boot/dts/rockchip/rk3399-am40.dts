@@ -196,11 +196,12 @@
 		simple-audio-card,name = "dp-sound";
 
 		simple-audio-card,cpu {
-			// sound-dai = <&i2s2>;
+			/* sound-dai = <&i2s2>; */
 			sound-dai = <&spdif>;
 		};
+
 		simple-audio-card,codec {
-			// sound-dai = <&cdn_dp 0>;
+			/* sound-dai = <&cdn_dp 0>; */
 			sound-dai = <&cdn_dp 1>;
 		};
 	};
@@ -252,11 +253,12 @@
 		#address-cells = <1>;
 		#size-cells = <0>;
 
-		rtl8211f: ethernet-phy@0 {
+		rtl8211f: rtl8211f@0 {
 			reg = <0>;
 			reset-assert-us = <10000>;
 			reset-deassert-us = <30000>;
 			reset-gpios = <&gpio3 RK_PB7 GPIO_ACTIVE_LOW>;
+			realtek,led-data = <0x820b>;
 		};
 	};
 };
@@ -272,11 +274,11 @@
 	ddc-i2c-bus = <&i2c3>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&hdmi_cec>;
-	status = "disabled";
+	status = "okay";
 };
 
 &hdmi_sound {
-	status = "disabled";
+	status = "okay";
 };
 
 &i2c0 {
@@ -500,6 +502,10 @@
 	};
 };
 
+&i2c3 {
+	status = "okay";
+};
+
 &i2c4 {
 	status = "okay";
 	i2c-scl-rising-time-ns = <300>;
@@ -606,7 +612,7 @@
 		};
 	};
 
-	usb2 {
+	usb {
 		vcc5v0_host_en: vcc5v0-hots-en {
 			rockchip,pins = <1 RK_PA3 RK_FUNC_GPIO &pcfg_pull_none>;
 		};
@@ -684,6 +690,10 @@
 &u2phy0 {
 	status = "okay";
 
+	u2phy0_otg: otg-port {
+		status = "okay";
+	};
+
 	u2phy0_host: host-port {
 		phy-supply = <&vcc5v0_host>;
 		status = "okay";
@@ -692,6 +702,10 @@
 
 &u2phy1 {
 	status = "okay";
+
+	u2phy1_otg: otg-port {
+		status = "okay";
+	};
 
 	u2phy1_host: host-port {
 		phy-supply = <&vcc5v0_host>;

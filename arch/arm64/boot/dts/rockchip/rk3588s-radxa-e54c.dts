@@ -730,7 +730,7 @@
 	status = "okay";
 };
 
-&rknn_core_top {
+&rknn_core_0 {
 	npu-supply = <&vdd_npu_s0>;
 	sram-supply = <&vdd_npu_mem_s0>;
 	status = "okay";
@@ -748,7 +748,7 @@
 	status = "okay";
 };
 
-&rknn_mmu_top {
+&rknn_mmu_0 {
 	status = "okay";
 };
 

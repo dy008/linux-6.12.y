@@ -96,16 +96,6 @@
 		vin-supply = <&vcc_sysin>;
 	};
 
-	vcc_3v3_pmu: regulator-3v3-0 {
-		compatible = "regulator-fixed";
-		regulator-name = "vcc_3v3_pmu";
-		regulator-always-on;
-		regulator-boot-on;
-		regulator-min-microvolt = <3300000>;
-		regulator-max-microvolt = <3300000>;
-		vin-supply = <&vcc_3v3_s3>;
-	};
-
 	vcc_3v3_s0: regulator-3v3-1 {
 		compatible = "regulator-fixed";
 		regulator-name = "vcc_3v3_s0";
@@ -342,10 +332,14 @@
 		#address-cells = <3>;
 		#size-cells = <2>;
 
+		bus-range = <0x30 0x3f>;
+		device_type = "pci";
+		ranges;
+
 		rtl8125_1: pcie-eth@0,0 {
 			compatible = "pci10ec,8125";
 			label = "eth0";
-			reg = <0x000000 0 0 0 0>;
+			reg = <0x310000 0 0 0 0>;
 
 			/* G+: LED0
 			 * G-: LED1
@@ -377,10 +371,14 @@
 		#address-cells = <3>;
 		#size-cells = <2>;
 
+		bus-range = <0x40 0x4f>;
+		device_type = "pci";
+		ranges;
+
 		rtl8125_2: pcie-eth@0,0 {
 			compatible = "pci10ec,8125";
 			label = "eth1";
-			reg = <0x000000 0 0 0 0>;
+			reg = <0x410000 0 0 0 0>;
 
 			/* G+: LED0
 			 * G-: LED1
@@ -449,7 +447,7 @@
 	};
 };
 
-&rknn_core_top {
+&rknn_core_0 {
 	npu-supply = <&vdd_npu_s0>;
 	sram-supply = <&vdd_npu_mem_s0>;
 	status = "okay";
@@ -467,7 +465,7 @@
 	status = "okay";
 };
 
-&rknn_mmu_top {
+&rknn_mmu_0 {
 	status = "okay";
 };
 
@@ -653,7 +651,7 @@
 				};
 			};
 
-			vcc_3v3_s3: dcdc-reg8 {
+			vcc_3v3_s3: vcc_3v3_pmu: dcdc-reg8 {
 				regulator-name = "vcc_3v3_s3";
 				regulator-always-on;
 				regulator-boot-on;
