@@ -232,7 +232,7 @@
 	pinctrl-0 = <&i2c3m0_xfer>;
 	status = "okay";
 
-	es8323: audio-codec@10 {
+	es8323: audio-codec@11 {
 		compatible = "everest,es8388", "everest,es8328";
 		reg = <0x11>;
 		clocks = <&cru I2S0_8CH_MCLKOUT>;
