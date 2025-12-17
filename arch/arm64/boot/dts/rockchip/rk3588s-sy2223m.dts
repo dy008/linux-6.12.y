@@ -747,12 +747,6 @@
 	status = "okay";
 };
 
-&can1 {
-	status = "okay";
-	pinctrl-names = "default";
-	pinctrl-0 = <&can1m1_pins>;
-};
-
 &usbdp_phy0 {
 	status = "okay";
 };
