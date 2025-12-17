@@ -260,11 +260,11 @@
 	rockchip,i2s-tx-route = <3 2 1 0>;
 	rockchip,i2s-rx-route = <1 3 2 0>;
 	pinctrl-names = "default";
-	pinctrl-0 = <&i2s0m0_sclk
-	             &i2s0m0_mclk
-	             &i2s0m0_lrck
-	             &i2s0m0_sdi0
-	             &i2s0m0_sdo0>;
+	pinctrl-0 = <&i2s0_sclk
+	             &i2s0_mclk
+	             &i2s0_lrck
+	             &i2s0_sdi0
+	             &i2s0_sdo0>;
 	status = "okay";
 };
 
