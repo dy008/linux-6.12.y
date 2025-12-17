@@ -309,6 +309,13 @@
 
 &pinctrl {
 
+	imu{
+		icm_int1: icm-int1 {
+			//rockchip,pins = <0x04 0x11 0x00 0x148>;
+			rockchip,pins = <4 RK_PC1 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+	};
+
 	sound {
 		hp_detect: hp-detect {
 			rockchip,pins = <4 RK_PA5 RK_FUNC_GPIO &pcfg_pull_none>;
