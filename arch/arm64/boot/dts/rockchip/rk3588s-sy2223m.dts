@@ -36,7 +36,9 @@
 		simple-audio-card,mclk-fs = <256>;
 		simple-audio-card,routing =
 			"Headphones", "LOUT1",
-			"Headphones", "ROUT1",
+			"Headphones", "ROUT1";
+		simple-audio-card,widgets =
+			"Headphone", "Headphones";
 
 		simple-audio-card,cpu {
 			sound-dai = <&i2s0_8ch>;
