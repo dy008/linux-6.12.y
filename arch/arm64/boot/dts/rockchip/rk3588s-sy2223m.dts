@@ -50,13 +50,13 @@
 		};
 	};
 
-	hdmi0-con {
+	hdmi1-con {
 		compatible = "hdmi-connector";
 		type = "a";
 
 		port {
-			hdmi0_con_in: endpoint {
-				remote-endpoint = <&hdmi0_out_con>;
+			hdmi1_con_in: endpoint {
+				remote-endpoint = <&hdmi1_out_con>;
 			};
 		};
 	};
@@ -140,27 +140,27 @@
 	status = "okay";
 };
 
-&hdmi0 {
+&hdmi1 {
 	status = "okay";
 };
 
-&hdmi0_in {
-	hdmi0_in_vp0: endpoint {
-		remote-endpoint = <&vp0_out_hdmi0>;
+&hdmi1_in {
+	hdmi1_in_vp0: endpoint {
+		remote-endpoint = <&vp0_out_hdmi1>;
 	};
 };
 
-&hdmi0_out {
-	hdmi0_out_con: endpoint {
-		remote-endpoint = <&hdmi0_con_in>;
+&hdmi1_out {
+	hdmi1_out_con: endpoint {
+		remote-endpoint = <&hdmi1_con_in>;
 	};
 };
 
-&hdmi0_sound {
+&hdmi1_sound {
 	status = "okay";
 };
 
-&hdptxphy0 {
+&hdptxphy1 {
 	status = "okay";
 };
 
@@ -308,7 +308,7 @@
 };
 
 &pinctrl {
-
+	
 	imu{
 		icm_int1: icm-int1 {
 			//rockchip,pins = <0x04 0x11 0x00 0x148>;
@@ -791,8 +791,8 @@
 };
 
 &vp0 {
-	vp0_out_hdmi0: endpoint@ROCKCHIP_VOP2_EP_HDMI0 {
-		reg = <ROCKCHIP_VOP2_EP_HDMI0>;
-		remote-endpoint = <&hdmi0_in_vp0>;
+	vp0_out_hdmi1: endpoint@ROCKCHIP_VOP2_EP_hdmi1 {
+		reg = <ROCKCHIP_VOP2_EP_hdmi1>;
+		remote-endpoint = <&hdmi1_in_vp0>;
 	};
 };
