@@ -794,8 +794,8 @@
 };
 
 &vp0 {
-	vp0_out_hdmi0: endpoint@ROCKCHIP_VOP2_EP_hdmi0 {
-		reg = <ROCKCHIP_VOP2_EP_hdmi0>;
+	vp0_out_hdmi0: endpoint@ROCKCHIP_VOP2_EP_HDMI0 {
+		reg = <ROCKCHIP_VOP2_EP_HDMI0>;
 		remote-endpoint = <&hdmi0_in_vp0>;
 	};
 };
