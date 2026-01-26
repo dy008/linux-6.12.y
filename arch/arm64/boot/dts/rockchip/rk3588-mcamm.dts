@@ -136,7 +136,7 @@
 	status = "okay";
 };
 
-&mdio0 {
+&mdio1 {
 	rgmii_phy: ethernet-phy@1 {
 		/* RTL8211F */
 		compatible = "ethernet-phy-id001c.c916";
