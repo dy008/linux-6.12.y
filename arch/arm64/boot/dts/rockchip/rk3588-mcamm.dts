@@ -195,7 +195,7 @@
 
 &gmac1 {
 	clock_in_out = "output";
-	phy-handle = <&rgmii_phy>;
+	phy-handle = <&rgmii_phy1>;
 	phy-mode = "rgmii-rxid";
 	pinctrl-0 = <&gmac1_miim
 		     &gmac1_tx_bus2
@@ -209,7 +209,7 @@
 };
 
 &mdio1 {
-	rgmii_phy: ethernet-phy@1 {
+	rgmii_phy1: ethernet-phy@1 {
 		/* RTL8211F */
 		compatible = "ethernet-phy-id001c.c916";
 		reg = <0x1>;
