@@ -14,8 +14,8 @@
 #include "rk3588s.dtsi"
 
 / {
-    model = "ECOVACS RK3588 Hl Development Board";
-	compatible = "rockchip,sy2223-rk3588s", "rockchip,rk3588";
+    model = "ECOVACS RK3588S Hl Development Board";
+	compatible = "dy008,sy2223", "rockchip,rk3588s";
 
 	aliases {
 		ethernet0 = &gmac1;
@@ -25,54 +25,6 @@
 
 	chosen {
 		stdout-path = "serial2:1500000n8";
-	};
-
-	adc-keys {
-		compatible = "adc-keys";
-		io-channels = <&saradc 1>;
-		io-channel-names = "buttons";
-		keyup-threshold-microvolt = <1800000>;
-		poll-interval = <100>;
-
-		button-recovery {
-			label = "Recovery";
-			linux,code = <KEY_VENDOR>;
-			press-threshold-microvolt = <1800>;
-		};
-	};
-
-	analog-sound {
-		compatible = "simple-audio-card";
-		simple-audio-card,name = "rockchip,es8311";
-		simple-audio-card,bitclock-master = <&masterdai>;
-        simple-audio-card,hp-det-gpios = <&gpio4 RK_PA5 GPIO_ACTIVE_HIGH>;
-		simple-audio-card,format = "i2s";
-		simple-audio-card,mclk-fs = <256>;
-		simple-audio-card,routing =
-			"Headphones", "LOUT1",
-			"Headphones", "ROUT1";
-		simple-audio-card,widgets =
-			"Headphone", "Headphones";
-
-		simple-audio-card,cpu {
-			sound-dai = <&i2s0_8ch>;
-		};
-
-		masterdai: simple-audio-card,codec {
-			sound-dai = <&es8323>;
-			system-clock-frequency = <12288000>;
-		};
-	};
-
-	hdmi0-con {
-		compatible = "hdmi-connector";
-		type = "a";
-
-		port {
-			hdmi0_con_in: endpoint {
-				remote-endpoint = <&hdmi0_out_con>;
-			};
-		};
 	};
 
 	vcc5v0_sys: regulator-vcc5v0-sys {
@@ -86,7 +38,7 @@
 
     vcc_3v3_sd_s0: regulator-vcc-3v3-sd-s0 {
 		compatible = "regulator-fixed";
-		gpios = <&gpio1 RK_PA6 GPIO_ACTIVE_HIGH>;
+		gpios = <&gpio1 RK_PB5 GPIO_ACTIVE_LOW>;
 		regulator-name = "vcc_3v3_sd_s0";
 		regulator-boot-on;
 		regulator-min-microvolt = <3300000>;
@@ -164,30 +116,6 @@
 	status = "okay";
 };
 
-&hdmi0 {
-	status = "okay";
-};
-
-&hdmi0_in {
-	hdmi0_in_vp0: endpoint {
-		remote-endpoint = <&vp0_out_hdmi0>;
-	};
-};
-
-&hdmi0_out {
-	hdmi0_out_con: endpoint {
-		remote-endpoint = <&hdmi0_con_in>;
-	};
-};
-
-&hdmi0_sound {
-	status = "okay";
-};
-
-&hdptxphy0 {
-	status = "okay";
-};
-
 &i2c0 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&i2c0m2_xfer>;
@@ -251,90 +179,12 @@
 	};
 };
 
-&i2c3 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&i2c3m0_xfer>;
-	status = "okay";
-
-	es8323: audio-codec@11 {
-		compatible = "everest,es8388", "everest,es8328";
-		reg = <0x11>;
-		clocks = <&cru I2S0_8CH_MCLKOUT>;
-		AVDD-supply = <&vcc_3v3_s0>;
-		DVDD-supply = <&vcc_1v8_s0>;
-		HPVDD-supply = <&vcc_3v3_s0>;
-		PVDD-supply = <&vcc_3v3_s0>;
-		assigned-clocks = <&cru I2S0_8CH_MCLKOUT>;
-		assigned-clock-rates = <12288000>;
-		#sound-dai-cells = <0>;
-	};
-};
-
-&i2c5 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&i2c5m2_xfer>;
-	status = "okay";
-    // RTC
-	pt7c4337: pt7c4337@51 {
-			reg = <0x51>;
-		};
-};
-
-&i2s0_8ch {
-	rockchip,i2s-tx-route = <3 2 1 0>;
-	rockchip,i2s-rx-route = <1 3 2 0>;
-	pinctrl-names = "default";
-	pinctrl-0 = <&i2s0_sclk
-	             &i2s0_mclk
-	             &i2s0_lrck
-	             &i2s0_sdi0
-	             &i2s0_sdo0>;
-	status = "okay";
-};
-
-/* &spi3 {
-	status = "okay";
-	assigned-clocks = <&cru CLK_SPI3>;
-	assigned-clock-rates = <200000000>;
-	pinctrl-names = "default";
-	pinctrl-0 = <&spi3m1_cs0 &spi3m1_pins>;
-	rx-sample-delay-ns = <0x0f>;
-
-	icm42652@0 {
-		compatible = "invensense,icm42652";
-		reg = <0x00>;
-		spi-max-frequency = <20000000>;
-		spi-cpha;
-		spi-cpol;
-		interrupt-parent = <&gpio4>;
-		interrupts = <RK_PC1 IRQ_TYPE_EDGE_FALLING>;
-		pinctrl-names = "default";
-		pinctrl-0 = <&icm_int1>;
-	};
-}; */
-
 &pd_gpu {
 	domain-supply = <&vdd_gpu_s0>;
 };
 
 &pd_npu {
 	domain-supply = <&vdd_npu_s0>;
-};
-
-&pinctrl {
-	
-	imu{
-		icm_int1: icm-int1 {
-			//rockchip,pins = <0x04 0x11 0x00 0x148>;
-			rockchip,pins = <4 RK_PC1 RK_FUNC_GPIO &pcfg_pull_none>;
-		};
-	};
-
-	sound {
-		hp_detect: hp-detect {
-			rockchip,pins = <4 RK_PA5 RK_FUNC_GPIO &pcfg_pull_none>;
-		};
-	};
 };
 
 &rknn_core_0 {
@@ -364,11 +214,6 @@
 };
 
 &rknn_mmu_2 {
-	status = "okay";
-};
-
-&saradc {
-	vref-supply = <&avcc_1v8_s0>;
 	status = "okay";
 };
 
@@ -768,10 +613,6 @@
 	status = "okay";
 };
 
-&usbdp_phy0 {
-	status = "okay";
-};
-
 &usb_host0_ehci {
 	status = "okay";
 };
@@ -804,9 +645,3 @@
 	status = "okay";
 };
 
-&vp0 {
-	vp0_out_hdmi0: endpoint@ROCKCHIP_VOP2_EP_HDMI0 {
-		reg = <ROCKCHIP_VOP2_EP_HDMI0>;
-		remote-endpoint = <&hdmi0_in_vp0>;
-	};
-};
